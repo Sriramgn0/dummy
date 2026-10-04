@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Raju Printer | Print orders{% endblock %}
+{% block content %}
+<header class="home-topbar">
+  <a class="brand brand-light" href="{{ url_for('home') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+  <a class="home-admin-link" href="{{ url_for('login') }}">ADMIN SIGN IN <span aria-hidden="true">↗</span></a>
+</header>
+<main class="home-landing">
+  <section class="home-hero">
+    <div class="home-copy">
+      <p class="eyebrow eyebrow-light"><span class="status-dot"></span> YOUR LOCAL PRINT DESK</p>
+      <h1>Print work,<br>without the runaround.</h1>
+      <p class="home-lede">Everyday documents and large-format drawings, handled by your local print desk.</p>
+      <div class="home-actions">
+        <a class="button home-primary" href="{{ url_for('login') }}">Sign in to order <span aria-hidden="true">↗</span></a>
+        <a class="button home-secondary" href="{{ url_for('signup') }}">Create an account <span aria-hidden="true">＋</span></a>
+      </div>
+      <p class="home-access-note">Already have a customer login? Sign in to see your orders.</p>
+    </div>
+    <div class="home-image-wrap">
+      <img class="home-hero-image" src="{{ url_for('static', filename='digital-printing.jpg') }}" alt="Digital office printer ready to print a document">
+      <span class="home-image-caption"><span>01 / DIGITAL PRINT</span><span>READY WHEN YOU ARE</span></span>
+    </div>
+  </section>
+  <section class="services-section" id="services">
+    <div class="services-intro"><p class="eyebrow">WHAT WE PRINT</p><h2>Paperwork, plans,<br>and everything between.</h2><p>Choose a service to get started. Digital printing is priced by sheet; CAD drawings receive a custom quote before you pay.</p></div>
+    <article class="service-feature service-digital">
+      <img src="{{ url_for('static', filename='digital-printing.jpg') }}" alt="A desktop laser printer for everyday document printing" loading="lazy">
+      <div class="service-copy"><p class="eyebrow"><span class="section-index">01</span> EVERYDAY DOCUMENTS</p><h3>Digital printing</h3><p>Clear, convenient printing for reports, forms, study notes, and handouts. Choose black-and-white or colour and see the estimate before sending your order.</p><div class="service-specs"><span>FORMATS</span><strong>A4 · A3 · A5 · Letter</strong><span>PRICING</span><strong>Per sheet, shown up front</strong></div><a class="service-link" href="{{ url_for('signup') }}">Create an account to print <span aria-hidden="true">↗</span></a></div>
+    </article>
+    <article class="service-feature service-cad">
+      <img src="{{ url_for('static', filename='cad-drawings.jpg') }}" alt="Architectural blueprints spread out for review" loading="lazy">
+      <div class="service-copy"><p class="eyebrow"><span class="section-index">02</span> TECHNICAL DRAWINGS</p><h3>CAD plotting</h3><p>Large-format output for architectural plans, engineering drawings, and site layouts. Send your drawing and our print desk will review it and provide a quotation.</p><div class="service-specs"><span>SIZES</span><strong>A0 · A1 · A2 · A4</strong><span>PRICING</span><strong>Custom quotation before payment</strong></div><a class="service-link" href="{{ url_for('signup') }}">Create an account to request a quote <span aria-hidden="true">↗</span></a></div>
+    </article>
+  </section>
+  <section class="home-process" aria-label="Order process">
+    <div><span>01</span><strong>Choose a print service</strong></div>
+    <div><span>02</span><strong>Upload your document</strong></div>
+    <div><span>03</span><strong>Review price and pay</strong></div>
+    <div><span>04</span><strong>Follow order updates</strong></div>
+  </section>
+</main>
+{% endblock %}

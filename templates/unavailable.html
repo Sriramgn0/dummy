@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}Database unavailable | Raju Printer{% endblock %}
+{% block content %}<main class="error-screen"><a class="brand" href="{{ url_for('login') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a><p class="eyebrow">DATABASE CONNECTION</p><h1>We can’t reach the order desk.</h1><p>Check that MongoDB is running and your <code>MONGO_URI</code> is correct, then refresh this page.</p><a class="button button-primary" href="{{ url_for('login') }}">Try again <span aria-hidden="true">↗</span></a></main>{% endblock %}

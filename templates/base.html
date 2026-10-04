@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f5f1">
+  <title>{% block title %}Raju Printer{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}<div class="flash-stack">{% for category, message in messages %}{% if category == 'order-sent' %}<div class="order-popup-backdrop" data-order-popup><section class="order-popup" role="dialog" aria-modal="true" aria-labelledby="order-popup-title" aria-describedby="order-popup-message" tabindex="-1"><button class="order-popup-close" type="button" data-popup-close aria-label="Close confirmation">×</button><span class="order-popup-mark" aria-hidden="true">✓</span><p class="eyebrow">ORDER RECEIVED</p><h2 id="order-popup-title">Your order is in.</h2><p id="order-popup-message">{{ message }}</p><button class="button button-primary" type="button" data-popup-close>Got it <span aria-hidden="true">↗</span></button></section></div>{% else %}<div class="flash flash-{{ category }}" role="status">{{ message }}</div>{% endif %}{% endfor %}</div>{% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
