@@ -10,12 +10,100 @@
   <div class="page-heading"><div><p class="eyebrow">RAJU PRINTER <span class="eyebrow-divider">/</span> ACTIVE QUEUE</p><h1>Orders in progress.</h1><p class="muted">Quote orders, verify payments, update work status, and set delivery dates.</p></div><span class="heading-stamp">OPEN <span>—</span> {{ orders|length }}</span></div>
   <section class="stats-row" aria-label="Active order totals"><div class="stat"><span>NEEDS A QUOTE</span><strong>{{ counts.open }}</strong><i class="stat-mark mark-orange"></i></div><div class="stat"><span>PAYMENT ACTION</span><strong>{{ counts.payment }}</strong><i class="stat-mark mark-blue"></i></div><div class="stat"><span>IN PRODUCTION</span><strong>{{ counts.paid }}</strong><i class="stat-mark mark-green"></i></div></section>
   <section class="admin-orders-section"><div class="section-heading"><div><span class="section-index">01</span><h2>Active orders</h2><span class="count-pill">{{ orders|length }}</span></div><span class="section-note">LATEST FIRST · DELIVERED ORDERS IN ARCHIVE</span></div>
-  {% if orders %}<div class="admin-order-list">{% for order in orders %}<article class="admin-order"><div class="admin-order-main"><div class="order-documents">{% for document in order_documents(order) %}<a class="document-link" href="{{ url_for('download_document', order_id=order._id, document_index=loop.index0) }}"><span class="file-glyph">{{ document.document_name.rsplit('.', 1)[-1][:3]|upper }}</span><span><strong>{{ document.display_name }}</strong><small>{{ order.get('tracking_id', 'RP-' ~ order._id) }} · {{ order.created_at.strftime('%d %b %Y · %I:%M %p') }}</small></span></a>{% endfor %}</div><div class="admin-customer"><span class="avatar avatar-small">{{ order.customer_name[0]|upper }}</span><span>{{ order.customer_name }}<small class="id-small">ID {{ order.user_id }}</small></span></div><div class="admin-order-spec"><strong>{{ order.get('product_category', 'cad')|replace('_', ' ')|title }} · {% if order.get('product_category') == 'digital_printing' %}{{ order.get('sheet_count', order.get('file_count', 1)) * order.copies }}{% else %}{{ order.copies }}{% endif %} sheets</strong><span>{{ order.paper_size }}{% if order.get('product_category') == 'digital_printing' %} · {{ 'Colour' if order.print_type == 'color' else 'Black & white' }}{% if order.get('print_sides') == 'front_back' %} · Front and back{% endif %}{% endif %}</span></div><span class="status status-{{ order.status }}"><i></i>{{ order.status|status_label }}</span></div>
-    <div class="active-order-meta"><span>{{ order.get('delivery_type', 'pickup')|title }}{% if order.delivery_address %}: {{ order.delivery_address }}{% endif %}</span>{% if order.expected_delivery_date %}<span>EXPECTED DELIVERY: {{ order.expected_delivery_date.strftime('%d %b %Y') }}</span>{% endif %}{% if order.notes %}<span>NOTE: {{ order.notes }}</span>{% endif %}{% if order.quote_paise %}<strong>₹{{ order.quote_paise|money }}</strong>{% endif %}</div>
-    {% if order.status in ['pending_quote', 'awaiting_payment'] and order.get('product_category') != 'digital_printing' %}<form class="quote-form" method="post" action="{{ url_for('update_quote', order_id=order._id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label for="amount-{{ order._id }}">Set total quotation{% if order.delivery_type == 'delivery' %} including delivery{% endif %}</label><span class="currency-input"><span>₹</span><input id="amount-{{ order._id }}" name="amount" type="number" min="0.01" step="0.01" value="{{ '%.2f'|format(order.quote_paise / 100) if order.quote_paise else '' }}" placeholder="0.00" required></span><button class="button button-quiet" type="submit">Send quote <span aria-hidden="true">↗</span></button></form>{% endif %}
-    {% if order.status == 'payment_submitted' %}<form class="confirm-payment-form" method="post" action="{{ url_for('confirm_upi_payment', order_id=order._id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div><strong>UPI payment reported · ₹{{ order.quote_paise|money }}</strong><small>{% if order.payment_reference %}Reference {{ order.payment_reference }}{% else %}Check your UPI receipt before confirming.{% endif %}</small></div><button class="button button-primary" type="submit">Mark payment received <span aria-hidden="true">✓</span></button></form>{% endif %}
-    {% if order.status in ['awaiting_payment', 'payment_submitted', 'paid', 'confirmed', 'printing', 'work_in_progress', 'ready_for_pickup', 'out_for_delivery'] %}<form class="admin-delivery-form" method="post" action="{{ url_for('add_order_update', order_id=order._id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="field"><label for="status-{{ order._id }}">Order status</label><select id="status-{{ order._id }}" name="status"><option value="{{ order.status }}" selected>{{ order.status|status_label }}</option>{% if order.status in ['awaiting_payment', 'payment_submitted'] %}<option value="paid">Paid (verify receipt)</option>{% endif %}{% if order.status in ['paid', 'confirmed', 'printing', 'work_in_progress'] %}<option value="work_in_progress">Work in progress</option>{% endif %}{% if order.status not in ['awaiting_payment', 'payment_submitted'] %}<option value="delivered">Delivered</option>{% endif %}</select></div><div class="field"><label for="expected-delivery-{{ order._id }}">Expected delivery</label><input id="expected-delivery-{{ order._id }}" name="expected_delivery_date" type="date" value="{{ order.expected_delivery_date.strftime('%Y-%m-%d') if order.expected_delivery_date else '' }}"></div><div class="field"><label for="note-{{ order._id }}">Customer update</label><input id="note-{{ order._id }}" name="note" maxlength="500" placeholder="Delivery detail or progress"></div><button class="button button-quiet" type="submit">Save update <span aria-hidden="true">↗</span></button></form>{% endif %}
-  </article>{% endfor %}</div>{% else %}<div class="empty-state"><span class="empty-glyph">00</span><div><h3>Nothing in progress.</h3><p>New customer orders will appear in this queue.</p></div></div>{% endif %}
+  {% if orders %}
+  <div class="customer-active-orders admin-active-orders">
+    {% for order in orders %}
+    <article class="customer-order-card admin-order-card">
+      <header class="customer-order-header">
+        <div class="customer-order-identity">
+          <span class="eyebrow">ORDER</span>
+          <strong>{{ order.get('tracking_id', 'RP-' ~ order._id) }}</strong>
+          <span class="customer-order-date">Placed {{ order.created_at.strftime('%d %b %Y · %I:%M %p') }}</span>
+          <span class="admin-order-customer"><span class="avatar avatar-small">{{ order.customer_name[0]|upper }}</span><span>{{ order.customer_name }}<small>ID {{ order.user_id }}</small></span></span>
+        </div>
+        <div class="admin-order-header-actions">
+          <span class="status status-{{ order.status }}"><i></i>{{ order.status|status_label }}</span>
+          <a class="button button-quiet admin-download-order" href="{{ url_for('download_order_files', order_id=order._id) }}">Download ZIP</a>
+        </div>
+      </header>
+      <div class="customer-order-body">
+        <section class="customer-order-items" aria-label="Order items">
+          {% set document_index = namespace(value=0) %}
+          {% for item in order_items(order) %}
+          <article class="customer-order-item admin-order-item">
+            <div class="customer-order-item-heading">
+              <div><span class="customer-item-number">ITEM {{ loop.index }}</span><h3>{{ 'CAD drawing' if item.product_category == 'cad' else 'Digital printing' }}</h3></div>
+              <strong>{{ item.paper_size }}</strong>
+            </div>
+            <div class="customer-order-item-details">
+              <span>{{ item.documents|length }} file{{ '' if item.documents|length == 1 else 's' }}</span>
+              <span>{{ item.copies }} cop{{ 'y' if item.copies == 1 else 'ies' }} per file</span>
+              {% if item.product_category == 'digital_printing' %}
+              <span>{{ 'Colour' if item.print_type == 'color' else 'Black and white' }}</span>
+              <span>{{ 'Front and back' if item.print_sides == 'front_back' else 'Front only' }}</span>
+              {% if item.sheet_count %}<span>{{ item.sheet_count }} sheet{{ '' if item.sheet_count == 1 else 's' }} per copy</span>{% endif %}
+              {% endif %}
+            </div>
+            {% if item.product_category == 'digital_printing' and item.estimate_paise is not none %}
+            <p class="admin-item-estimate">Estimated item total: <strong>₹{{ item.estimate_paise|money }}</strong>{% if item.price_each_paise %}<span> · ₹{{ item.price_each_paise|money }} per sheet</span>{% endif %}</p>
+            {% endif %}
+            {% if item.notes %}<p class="customer-order-note"><strong>Instructions:</strong> {{ item.notes }}</p>{% endif %}
+            <div class="order-documents customer-order-documents">
+              {% for document in item.documents %}
+              <a class="document-link" href="{{ url_for('download_document', order_id=order._id, document_index=document_index.value) }}"><span class="file-glyph">{{ document.document_name.rsplit('.', 1)[-1][:3]|upper }}</span><span><strong>{{ document.document_name }}</strong><small>Download file</small></span></a>
+              {% set document_index.value = document_index.value + 1 %}
+              {% endfor %}
+            </div>
+          </article>
+          {% endfor %}
+        </section>
+        <aside class="customer-order-summary admin-order-summary">
+          <div class="customer-summary-row"><span>Customer</span><strong>{{ order.customer_name }}</strong></div>
+          <div class="customer-summary-row"><span>Status</span><strong>{{ order.status|status_label }}</strong></div>
+          <div class="customer-summary-row"><span>Fulfilment</span><strong>{{ order.get('delivery_type', 'pickup')|title }}</strong></div>
+          {% if order.delivery_address %}<p class="customer-delivery-address">{{ order.delivery_address }}</p>{% endif %}
+          {% if order.expected_delivery_date %}<div class="customer-summary-row"><span>Expected by</span><strong>{{ order.expected_delivery_date.strftime('%d %b %Y') }}</strong></div>{% endif %}
+          {% if order.quote_paise %}<div class="customer-summary-row admin-order-total"><span>Order total</span><strong class="customer-order-price">₹{{ order.quote_paise|money }}</strong></div>
+          {% elif order.get('digital_estimate_paise') %}<div class="customer-summary-row"><span>Digital estimate</span><strong>₹{{ (order.get('digital_estimate_paise', 0) + order.get('delivery_fee_paise', 0))|money }}</strong></div>{% endif %}
+          {% if order.notes %}<p class="customer-order-note"><strong>Order note:</strong> {{ order.notes }}</p>{% endif %}
+        </aside>
+      </div>
+      {% if order.status in ['pending_quote', 'awaiting_payment'] and order.get('contains_cad', order.get('product_category') != 'digital_printing') %}
+      <section class="admin-order-tools">
+        <form class="quote-form" method="post" action="{{ url_for('update_quote', order_id=order._id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label for="amount-{{ order._id }}">Set total quotation{% if order.delivery_type == 'delivery' %} including delivery{% endif %}</label>
+          <span class="currency-input"><span>₹</span><input id="amount-{{ order._id }}" name="amount" type="number" min="0.01" step="0.01" value="{{ '%.2f'|format(order.quote_paise / 100) if order.quote_paise else ('%.2f'|format((order.get('digital_estimate_paise', 0) + order.get('delivery_fee_paise', 0)) / 100) if order.get('digital_estimate_paise') else '') }}" placeholder="0.00" required></span>
+          <button class="button button-quiet" type="submit">Send quote <span aria-hidden="true">↗</span></button>
+        </form>
+      </section>
+      {% endif %}
+      {% if order.status == 'payment_submitted' %}
+      <section class="admin-order-tools">
+        <form class="confirm-payment-form" method="post" action="{{ url_for('confirm_upi_payment', order_id=order._id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div><strong>Payment reported · ₹{{ order.quote_paise|money }}</strong><small>{% if order.payment_reference %}Reference {{ order.payment_reference }}{% else %}Check your UPI receipt before confirming.{% endif %}</small></div>
+          <button class="button button-primary" type="submit">Mark payment received <span aria-hidden="true">✓</span></button>
+        </form>
+      </section>
+      {% endif %}
+      {% if order.status in ['awaiting_payment', 'payment_submitted', 'paid', 'confirmed', 'printing', 'work_in_progress', 'ready_for_pickup', 'out_for_delivery'] %}
+      <section class="admin-order-tools">
+        <form class="admin-delivery-form" method="post" action="{{ url_for('add_order_update', order_id=order._id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="field"><label for="status-{{ order._id }}">Order status</label><select id="status-{{ order._id }}" name="status"><option value="{{ order.status }}" selected>{{ order.status|status_label }}</option>{% if order.status in ['awaiting_payment', 'payment_submitted'] %}<option value="paid">Paid (verify receipt)</option>{% endif %}{% if order.status in ['paid', 'confirmed', 'printing', 'work_in_progress'] %}<option value="work_in_progress">Work in progress</option>{% endif %}{% if order.status not in ['awaiting_payment', 'payment_submitted'] %}<option value="delivered">Delivered</option>{% endif %}</select></div>
+          <div class="field"><label for="expected-delivery-{{ order._id }}">Expected delivery</label><input id="expected-delivery-{{ order._id }}" name="expected_delivery_date" type="date" value="{{ order.expected_delivery_date.strftime('%Y-%m-%d') if order.expected_delivery_date else '' }}"></div>
+          <div class="field"><label for="note-{{ order._id }}">Customer update</label><input id="note-{{ order._id }}" name="note" maxlength="500" placeholder="Delivery detail or progress"></div>
+          <button class="button button-quiet" type="submit">Save update <span aria-hidden="true">↗</span></button>
+        </form>
+      </section>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="customer-orders-empty"><span class="empty-glyph">00</span><div><h3>Nothing in progress</h3><p>New customer orders will show up here with their files, status, and next steps.</p></div></div>
+  {% endif %}
   </section>
   <footer class="workspace-footer"><a class="breadcrumb-link" href="{{ url_for('digital_prices') }}">DIGITAL PRICES</a><a class="breadcrumb-link" href="{{ url_for('completed_orders') }}">COMPLETED ORDERS</a><a class="breadcrumb-link" href="{{ url_for('new_customer') }}">ADD CUSTOMER</a></footer>
 </main>

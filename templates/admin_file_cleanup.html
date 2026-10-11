@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Order file cleanup | Raju Printer{% endblock %}
+{% block content %}
+<header class="topbar">
+  <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+  <nav class="admin-nav"><a href="{{ url_for('digital_prices') }}">Prices</a><a href="{{ url_for('completed_orders') }}">Completed</a><a href="{{ url_for('customers') }}">Customers</a><a href="{{ url_for('new_customer') }}">Add customer</a></nav>
+  <div class="topbar-right"><a class="button button-quiet" href="{{ url_for('completed_orders') }}">Back to completed orders</a><span class="admin-tag"><span class="admin-tag-dot"></span> FILE CLEANUP</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet logout-button" type="submit">Log out</button></form></div>
+</header>
+<main class="workspace admin-workspace">
+  <div class="page-heading"><div><p class="eyebrow"><a class="breadcrumb-link" href="{{ url_for('dashboard') }}">ORDER DESK</a> <span class="eyebrow-divider">/</span> ORDER FILES</p><h1>Clean up stored files.</h1><p class="muted">Select files from delivered or cancelled orders using size, customer, and order-date filters.</p></div></div>
+  <section class="file-cleanup-panel">
+    <div class="file-cleanup-intro"><span class="section-index">01</span><div><h2>Choose files to review</h2><p>Size limits are inclusive and use MiB (1 MiB = 1,048,576 bytes). Leave both size limits blank to include files of any size. Only files currently stored for delivered or cancelled orders can match.</p></div></div>
+    <form class="file-cleanup-filters" method="get" action="{{ url_for('cleanup_completed_order_files') }}">
+      <input type="hidden" name="preview" value="1">
+      <div class="field"><label for="cleanup-customer">Customer</label><select id="cleanup-customer" name="customer_id"><option value="">All customers</option>{% for customer in customers %}<option value="{{ customer._id }}" {% if filters.customer_id == customer._id|string %}selected{% endif %}>{{ customer.name }} · {{ customer._id }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="cleanup-from">Order date from</label><input id="cleanup-from" type="date" name="start_date" value="{{ filters.start_date }}"></div>
+      <div class="field"><label for="cleanup-through">Order date through</label><input id="cleanup-through" type="date" name="end_date" value="{{ filters.end_date }}"></div>
+      <div class="field"><label for="cleanup-min-size">Minimum file size (MiB)</label><input id="cleanup-min-size" type="number" min="0" step="any" name="min_size_mb" value="{{ filters.min_size_mb }}" placeholder="No minimum"></div>
+      <div class="field"><label for="cleanup-max-size">Maximum file size (MiB)</label><input id="cleanup-max-size" type="number" min="0" step="any" name="max_size_mb" value="{{ filters.max_size_mb }}" placeholder="No maximum"></div>
+      <button class="button button-primary" type="submit">Preview matching files <span aria-hidden="true">↗</span></button>
+    </form>
+    <p class="file-cleanup-warning"><strong>Files are permanently deleted.</strong> Matching order and file records remain in the archive, and deleted files will be labeled unavailable. Preview results before confirming.</p>
+  </section>
+  {% if preview is not none %}
+  <section class="file-cleanup-results">
+    <div class="section-heading"><div><span class="section-index">02</span><h2>Deletion preview</h2><span class="count-pill">{{ preview.count }}</span></div><span class="section-note">{{ preview.size_bytes|filesizeformat(true) }} TO BE FREED</span></div>
+    {% if preview.count %}
+      {% if matched_files %}
+      <div class="file-cleanup-table-wrap"><table class="file-cleanup-table"><thead><tr><th>FILE</th><th>ORDER</th><th>CUSTOMER</th><th>SIZE</th></tr></thead><tbody>
+        {% for file in matched_files %}<tr><td>{{ file.file_name }}</td><td>{{ file.tracking_id }}</td><td>{{ file.customer_name }}</td><td>{{ file.size_bytes|filesizeformat(true) }}</td></tr>{% endfor %}
+      </tbody></table></div>
+      {% if preview.count > matched_files|length %}<p class="file-cleanup-more">Showing the first {{ matched_files|length }} files. All {{ preview.count }} matching files will be included.</p>{% endif %}
+      <form class="file-cleanup-confirm" method="post" action="{{ url_for('cleanup_completed_order_files') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="customer_id" value="{{ filters.customer_id }}">
+        <input type="hidden" name="start_date" value="{{ filters.start_date }}">
+        <input type="hidden" name="end_date" value="{{ filters.end_date }}">
+        <input type="hidden" name="min_size_mb" value="{{ filters.min_size_mb }}">
+        <input type="hidden" name="max_size_mb" value="{{ filters.max_size_mb }}">
+        <label><input type="checkbox" name="confirm_delete" value="yes" required> I understand this permanently deletes {{ preview.count }} file(s) and cannot be undone.</label>
+        <button class="button button-danger" type="submit">Delete {{ preview.count }} matching file(s)</button>
+      </form>
+      {% endif %}
+    {% else %}
+      <div class="empty-state"><span class="empty-glyph">00</span><div><h3>No files match these filters.</h3><p>Adjust the file-size, customer, or date range and preview again.</p></div></div>
+    {% endif %}
+  </section>
+  {% endif %}
+</main>
+{% endblock %}
