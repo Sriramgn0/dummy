@@ -44,7 +44,7 @@ Set the shop's receiving UPI ID in `.env`:
 
 ```dotenv
 RAJU_UPI_ID=shop@upi
-RAJU_UPI_NAME=Raju Printer
+RAJU_UPI_NAME=CAD Master
 ```
 
 Customers can open an installed UPI app with the order amount and tracking ID prefilled, then report that they sent payment. Orders remain unpaid until an admin checks the shop account and marks the payment received. Admins can mark an order paid directly from the active queue after checking the receipt, then set it to work in progress, record an expected delivery date, and mark it delivered. Status and date changes are added to the order timeline and sent to opted-in customers. Configure the standard delivery fee with the digital rate card in the admin dashboard. CAD quotations should include any delivery charge before they are sent.

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Order history | Raju Printer{% endblock %}
+{% block title %}Order history | CAD Master{% endblock %}
 {% block content %}
 <header class="topbar customer-topbar">
-  <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+  <a class="brand" href="{{ url_for('dashboard') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
   <nav class="customer-header-nav" aria-label="Customer navigation">
     <a href="{{ url_for('new_order') }}" {% if request.endpoint == 'new_order' %}aria-current="page"{% endif %}>New order</a>
     <a href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>Active orders</a>
@@ -32,6 +32,6 @@
     <div class="empty-state"><span class="empty-glyph">00</span><div><h3>No past orders yet.</h3><p>Completed and cancelled orders will appear here.</p></div></div>
     {% endif %}
   </section>
-  <footer class="workspace-footer"><span>RAJU PRINTER <span class="footer-dot">·</span> ORDER HISTORY</span><a class="breadcrumb-link" href="{{ url_for('dashboard') }}">BACK TO ACTIVE ORDERS</a></footer>
+  <footer class="workspace-footer"><span>CAD MASTER <span class="footer-dot">·</span> ORDER HISTORY</span><a class="breadcrumb-link" href="{{ url_for('dashboard') }}">BACK TO ACTIVE ORDERS</a></footer>
 </main>
 {% endblock %}

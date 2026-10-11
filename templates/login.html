@@ -1,20 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Sign in | Raju Printer{% endblock %}
+{% block title %}Sign in | CAD Master{% endblock %}
 {% block content %}
 <main class="login-shell">
   <section class="login-story">
-    <a class="brand brand-light" href="{{ url_for('home') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+    <a class="brand brand-light" href="{{ url_for('home') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
     <div class="story-copy">
       <p class="eyebrow eyebrow-light"><span class="status-dot"></span> PRINT, MADE SIMPLE</p>
       <h1>From file<br>to finished.</h1>
       <p class="story-lede">Send your documents. We’ll take care of the rest.</p>
     </div>
-    <div class="paper-stack" aria-hidden="true"><div class="paper paper-back"><span>RAJU PRINTER</span></div><div class="paper paper-middle"><span>PRINT ORDER</span><b>02</b><i></i><i></i><i></i></div><div class="paper paper-front"><span>YOUR NEXT<br>GREAT IDEA.</span><b>RP—01</b></div><div class="ink-seal">RP</div></div>
+    <div class="paper-stack" aria-hidden="true"><div class="paper paper-back"><span>CAD MASTER</span></div><div class="paper paper-middle"><span>PRINT ORDER</span><b>02</b><i></i><i></i><i></i></div><div class="paper paper-front"><span>YOUR NEXT<br>GREAT IDEA.</span><b>CM—01</b></div><div class="ink-seal">CM</div></div>
     <div class="story-footer"><span>PRINT. PICK UP. GET ON WITH IT.</span><span>EST. FOR YOUR NEXT BIG IDEA.</span></div>
   </section>
   <section class="login-panel">
     <div class="login-form-wrap">
-      <div class="mobile-brand"><a class="brand" href="{{ url_for('home') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a></div>
+      <div class="mobile-brand"><a class="brand" href="{{ url_for('home') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a></div>
       <p class="eyebrow">YOUR PRINT DESK</p>
       <h2>Welcome back.</h2>
       <p class="muted">Sign in to place an order or manage your print queue.</p>
@@ -26,9 +26,9 @@
         <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Your password" required>
         <button class="button button-primary button-wide" type="submit">Sign in <span aria-hidden="true">↗</span></button>
       </form>
-      <p class="login-foot">New to Raju Printer? <a href="{{ url_for('signup') }}">Create your customer account</a>.</p>
+      <p class="login-foot">New to CAD Master? <a href="{{ url_for('signup') }}">Create your customer account</a>.</p>
     </div>
-    <div class="panel-bottom"><span>SECURE CUSTOMER ACCESS</span><span>© RAJU PRINTER</span></div>
+    <div class="panel-bottom"><span>SECURE CUSTOMER ACCESS</span><span>© CAD MASTER</span></div>
   </section>
 </main>
 {% endblock %}

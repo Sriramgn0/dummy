@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Active orders | Raju Printer{% endblock %}
+{% block title %}Active orders | CAD Master{% endblock %}
 {% block content %}
 <header class="topbar">
-  <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+  <a class="brand" href="{{ url_for('dashboard') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
   <nav class="admin-nav"><a href="{{ url_for('digital_prices') }}">Prices</a><a href="{{ url_for('completed_orders') }}">Completed</a><a href="{{ url_for('customers') }}">Customers</a><a href="{{ url_for('new_customer') }}">Add customer</a></nav>
-  <div class="topbar-right"><span class="admin-tag"><span class="admin-tag-dot"></span> ADMIN DESK</span><span class="user-chip"><span class="avatar avatar-admin">RP</span><span>{{ current_user.name }}</span></span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet logout-button" type="submit">Log out</button></form></div>
+  <div class="topbar-right"><span class="admin-tag"><span class="admin-tag-dot"></span> ADMIN DESK</span><span class="user-chip"><span class="avatar avatar-admin">CM</span><span>{{ current_user.name }}</span></span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet logout-button" type="submit">Log out</button></form></div>
 </header>
 <main class="workspace admin-workspace">
-  <div class="page-heading"><div><p class="eyebrow">RAJU PRINTER <span class="eyebrow-divider">/</span> ACTIVE QUEUE</p><h1>Orders in progress.</h1><p class="muted">Quote orders, verify payments, update work status, and set delivery dates.</p></div><span class="heading-stamp">OPEN <span>—</span> {{ orders|length }}</span></div>
+  <div class="page-heading"><div><p class="eyebrow">CAD MASTER <span class="eyebrow-divider">/</span> ACTIVE QUEUE</p><h1>Orders in progress.</h1><p class="muted">Quote orders, verify payments, update work status, and set delivery dates.</p></div><span class="heading-stamp">OPEN <span>—</span> {{ orders|length }}</span></div>
   <section class="stats-row" aria-label="Active order totals"><div class="stat"><span>NEEDS A QUOTE</span><strong>{{ counts.open }}</strong><i class="stat-mark mark-orange"></i></div><div class="stat"><span>PAYMENT ACTION</span><strong>{{ counts.payment }}</strong><i class="stat-mark mark-blue"></i></div><div class="stat"><span>IN PRODUCTION</span><strong>{{ counts.paid }}</strong><i class="stat-mark mark-green"></i></div></section>
   <section class="admin-orders-section"><div class="section-heading"><div><span class="section-index">01</span><h2>Active orders</h2><span class="count-pill">{{ orders|length }}</span></div><span class="section-note">LATEST FIRST · DELIVERED ORDERS IN ARCHIVE</span></div>
   {% if orders %}

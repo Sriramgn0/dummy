@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Completed orders | Raju Printer{% endblock %}
+{% block title %}Completed orders | CAD Master{% endblock %}
 {% block content %}
 <header class="topbar">
-  <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+  <a class="brand" href="{{ url_for('dashboard') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
   <nav class="admin-nav"><a href="{{ url_for('digital_prices') }}">Prices</a><a href="{{ url_for('customers') }}">Customers</a><a href="{{ url_for('new_customer') }}">Add customer</a></nav>
   <div class="topbar-right"><a class="button button-quiet order-back-link" href="{{ url_for('dashboard') }}">Active orders <span aria-hidden="true">↗</span></a><span class="admin-tag"><span class="admin-tag-dot"></span> COMPLETED</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet logout-button" type="submit">Log out</button></form></div>
 </header>

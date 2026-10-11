@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Your orders | Raju Printer{% endblock %}
+{% block title %}Your orders | CAD Master{% endblock %}
 {% block content %}
 <header class="topbar customer-topbar">
-  <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+  <a class="brand" href="{{ url_for('dashboard') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
   <nav class="customer-header-nav" aria-label="Customer navigation">
     <a href="{{ url_for('new_order') }}" {% if request.endpoint == 'new_order' %}aria-current="page"{% endif %}>New order</a>
     <a href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>Active orders</a>
@@ -96,7 +96,7 @@
           </div>
         </section>
         {% elif order.status == 'payment_submitted' %}
-        <section class="customer-order-extra"><div class="payment-waiting"><strong>Payment reported</strong><span>Raju Printer will confirm receipt before processing your order.</span>{% if order.payment_reference %}<span>Reference: {{ order.payment_reference }}</span>{% endif %}</div></section>
+        <section class="customer-order-extra"><div class="payment-waiting"><strong>Payment reported</strong><span>CAD Master will confirm receipt before processing your order.</span>{% if order.payment_reference %}<span>Reference: {{ order.payment_reference }}</span>{% endif %}</div></section>
         {% endif %}
         {% if order.updates %}
         <section class="customer-order-extra customer-order-updates"><h3 class="timeline-heading">Latest updates</h3><ol class="order-timeline">{% for update in order.updates[-5:] %}<li><span class="timeline-dot status-dot-{{ update.status }}"></span><div><strong>{{ update.status|status_label }}</strong><p>{{ update.note }}</p></div><time>{{ update.created_at.strftime('%d %b · %I:%M %p') }}</time></li>{% endfor %}</ol></section>
@@ -108,6 +108,6 @@
     <div class="customer-orders-empty"><span class="empty-glyph">01</span><div><h3>No active orders yet</h3><p>Once you place an order, you can follow its quotation, payment, and printing progress here.</p><a class="button button-primary" href="{{ url_for('new_order') }}">Place your first order <span aria-hidden="true">↗</span></a></div></div>
     {% endif %}
   </section>
-  <footer class="workspace-footer"><span>RAJU PRINTER <span class="footer-dot">·</span> PRINTED WITH CARE</span><span>QUESTIONS? ASK US IN STORE.</span></footer>
+  <footer class="workspace-footer"><span>CAD MASTER <span class="footer-dot">·</span> PRINTED WITH CARE</span><span>QUESTIONS? ASK US IN STORE.</span></footer>
 </main>
 {% endblock %}
