@@ -39,11 +39,51 @@ document.addEventListener("DOMContentLoaded", () => {
     closeButtons[0]?.focus();
   }
 
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  document.querySelectorAll("[data-upi-android-href], [data-upi-ios-href]").forEach((link) => {
+    if (isAndroid && link.dataset.upiAndroidHref) {
+      link.href = link.dataset.upiAndroidHref;
+    } else if (isIOS && link.dataset.upiIosHref) {
+      link.href = link.dataset.upiIosHref;
+    }
+  });
+
   const fileInput = document.querySelector("#documents");
   const fileLabel = document.querySelector("[data-file-name]");
   const fileList = document.querySelector("[data-file-list]");
   const dropZone = document.querySelector("[data-drop-zone]");
   let selectedFiles = [];
+
+  const renderSelectedFiles = () => {
+    fileLabel.textContent = selectedFiles.length
+      ? `${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"} selected — add more`
+      : "Choose documents";
+    fileList.replaceChildren();
+    const fragment = document.createDocumentFragment();
+    selectedFiles.forEach((file, index) => {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      const remove = document.createElement("button");
+      name.textContent = file.name;
+      remove.type = "button";
+      remove.className = "remove-selected-file";
+      remove.textContent = "Delete";
+      remove.setAttribute("aria-label", `Delete ${file.name}`);
+      remove.addEventListener("click", () => {
+        selectedFiles.splice(index, 1);
+        renderSelectedFiles();
+        orderForm?.dispatchEvent(new Event("files-updated"));
+      });
+      item.append(name, remove);
+      fragment.append(item);
+    });
+    fileList.append(fragment);
+    fileList.hidden = selectedFiles.length === 0;
+    fileInput.closest(".upload-zone")?.classList.toggle("has-file", selectedFiles.length > 0);
+    fileInput.required = false;
+  };
 
   if (fileInput && fileLabel) {
     const addSelectedFiles = (files) => {
@@ -57,35 +97,6 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       renderSelectedFiles();
       orderForm?.dispatchEvent(new Event("files-updated"));
-    };
-
-  const renderSelectedFiles = () => {
-    fileLabel.textContent = selectedFiles.length
-      ? `${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"} selected — add more`
-      : "Choose documents";
-    fileList.replaceChildren();
-    const fragment = document.createDocumentFragment();
-    selectedFiles.forEach((file, index) => {
-      const item = document.createElement("li");
-        const name = document.createElement("span");
-        const remove = document.createElement("button");
-        name.textContent = file.name;
-        remove.type = "button";
-        remove.className = "remove-selected-file";
-        remove.textContent = "Delete";
-        remove.setAttribute("aria-label", `Delete ${file.name}`);
-        remove.addEventListener("click", () => {
-          selectedFiles.splice(index, 1);
-          renderSelectedFiles();
-          orderForm?.dispatchEvent(new Event("files-updated"));
-        });
-        item.append(name, remove);
-        fragment.append(item);
-      });
-      fileList.append(fragment);
-      fileList.hidden = selectedFiles.length === 0;
-      fileInput.closest(".upload-zone")?.classList.toggle("has-file", selectedFiles.length > 0);
-      fileInput.required = false;
     };
 
     fileInput.addEventListener("change", () => {
@@ -269,6 +280,20 @@ document.addEventListener("DOMContentLoaded", () => {
       listItem.append(summary, remove);
       return listItem;
     };
+    const resetItemComposer = () => {
+      selectedFiles = [];
+      fileInput.value = "";
+      categoryInputs.forEach((input) => {
+        input.checked = input.value === "cad";
+      });
+      quantity.value = "1";
+      sizeSelect.selectedIndex = 0;
+      modeSelect.selectedIndex = 0;
+      sidesSelect.selectedIndex = 0;
+      cadSize.selectedIndex = 0;
+      notes.value = "";
+      renderSelectedFiles();
+    };
     const renderCart = () => {
       const fragment = document.createDocumentFragment();
       cart.forEach((item, index) => {
@@ -294,9 +319,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const addedItem = { ...itemData, payload };
         cart.push(addedItem);
         cartList.append(createCartRow(addedItem, cart.length - 1));
-        selectedFiles = [];
-        notes.value = "";
-        renderSelectedFiles();
+        resetItemComposer();
       } finally {
         addCartItemLabel.textContent = "Add item to cart";
         addCartItemButton.removeAttribute("aria-busy");

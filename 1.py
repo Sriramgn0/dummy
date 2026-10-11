@@ -1724,8 +1724,18 @@ def submit_upi_payment(order_id):
     })
     if not order:
         abort(404)
+    payment_channel = request.form.get("payment_channel", "upi_app")
+    if payment_channel not in {"upi_app", "upi_qr"}:
+        abort(400)
     payment_reference = request.form.get("payment_reference", "").strip()[:100]
-    note = "Customer reports UPI payment sent; awaiting admin confirmation."
+    if payment_channel == "upi_qr" and not payment_reference:
+        flash("Enter the transaction ID from your QR payment before submitting.", "error")
+        return redirect(url_for("dashboard"))
+    note = (
+        "Customer reports UPI QR payment sent; awaiting admin confirmation."
+        if payment_channel == "upi_qr"
+        else "Customer reports UPI payment sent; awaiting admin confirmation."
+    )
     if payment_reference:
         note += f" Reference: {payment_reference}."
     result = database.orders.update_one(
@@ -1734,6 +1744,7 @@ def submit_upi_payment(order_id):
             "$set": {
                 "status": "payment_submitted",
                 "payment_method": "upi",
+                "payment_channel": payment_channel,
                 "payment_reference": payment_reference or None,
                 "payment_submitted_at": datetime.now(timezone.utc),
             },

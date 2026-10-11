@@ -52,7 +52,49 @@
           </aside>
         </div>
         {% if order.status == 'awaiting_payment' %}
-        <section class="customer-order-extra"><div class="upi-payment-panel"><div><p class="eyebrow">PAYMENT · UPI</p><h3>₹{{ order.quote_paise|money }}</h3><p>Pay using any UPI app on your phone{% if order.delivery_type == 'delivery' %}, including the delivery fee{% endif %}.</p>{% if upi_id %}<span class="upi-id">{{ upi_id }}</span>{% else %}<span class="configuration-hint">UPI details are not configured yet. Contact Raju Printer.</span>{% endif %}</div>{% if upi_id %}{% set upi_query = 'pa=' ~ (upi_id|urlencode) ~ '&pn=' ~ (upi_payee_name|urlencode) ~ '&am=' ~ (('%.2f'|format(order.quote_paise / 100))|urlencode) ~ '&cu=INR&tn=' ~ (order.get('tracking_id', 'RP-' ~ order._id)|urlencode) %}<div class="upi-actions"><span>Choose your UPI app</span><div class="upi-app-buttons"><a class="button button-pay" href="intent://pay?{{ upi_query }}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end">Google Pay</a><a class="button button-pay" href="intent://pay?{{ upi_query }}#Intent;scheme=upi;package=com.phonepe.app;end">PhonePe</a><a class="button button-pay" href="intent://pay?{{ upi_query }}#Intent;scheme=upi;package=net.one97.paytm;end">Paytm</a><a class="button button-pay" href="upi://pay?{{ upi_query }}">Other UPI app</a></div><form method="post" action="{{ url_for('submit_upi_payment', order_id=order._id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label for="payment-reference-{{ order._id }}">UPI reference <span class="optional">OPTIONAL</span></label><input id="payment-reference-{{ order._id }}" name="payment_reference" maxlength="100" placeholder="Transaction ID"><button class="button button-primary" type="submit">I’ve sent payment <span aria-hidden="true">✓</span></button></form></div>{% endif %}</div></section>
+        <section class="customer-order-extra">
+          <div class="upi-payment-panel">
+            <div>
+              <p class="eyebrow">PAYMENT · UPI</p>
+              <h3>₹{{ order.quote_paise|money }}</h3>
+              <p>Pay using any UPI app on your phone{% if order.delivery_type == 'delivery' %}, including the delivery fee{% endif %}.</p>
+              {% if upi_id %}<span class="upi-id">{{ upi_id }}</span>{% else %}<span class="configuration-hint">UPI app payment is not configured. You can still pay using the QR code.</span>{% endif %}
+            </div>
+            <div class="upi-actions">
+              {% if upi_id %}
+              {% set upi_query = 'pa=' ~ (upi_id|urlencode) ~ '&pn=' ~ (upi_payee_name|urlencode) ~ '&am=' ~ (('%.2f'|format(order.quote_paise / 100))|urlencode) ~ '&cu=INR&tn=' ~ (order.get('tracking_id', 'RP-' ~ order._id)|urlencode) %}
+              <span>Choose your UPI app</span>
+              <div class="upi-app-buttons">
+                <a class="button button-pay" data-upi-android-href="intent://pay?{{ upi_query }}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end" data-upi-ios-href="gpay://upi/pay?{{ upi_query }}" href="upi://pay?{{ upi_query }}">Google Pay</a>
+                <a class="button button-pay" data-upi-android-href="intent://pay?{{ upi_query }}#Intent;scheme=upi;package=com.phonepe.app;end" data-upi-ios-href="phonepe://pay?{{ upi_query }}" href="upi://pay?{{ upi_query }}">PhonePe</a>
+                <a class="button button-pay" data-upi-android-href="intent://pay?{{ upi_query }}#Intent;scheme=upi;package=net.one97.paytm;end" data-upi-ios-href="paytmmp://pay?{{ upi_query }}" href="upi://pay?{{ upi_query }}">Paytm</a>
+                <a class="button button-pay" href="upi://pay?{{ upi_query }}">Other UPI app</a>
+              </div>
+              <form method="post" action="{{ url_for('submit_upi_payment', order_id=order._id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="payment_channel" value="upi_app">
+                <label for="payment-reference-{{ order._id }}">UPI reference <span class="optional">OPTIONAL</span></label>
+                <input id="payment-reference-{{ order._id }}" name="payment_reference" maxlength="100" placeholder="Transaction ID">
+                <button class="button button-primary" type="submit">I’ve sent payment <span aria-hidden="true">✓</span></button>
+              </form>
+              {% endif %}
+              <details class="upi-qr-option">
+                <summary>Pay using QR code and enter transaction ID</summary>
+                <div class="upi-qr-content">
+                  <img src="{{ url_for('static', filename='upi-qr.png') }}" alt="UPI payment QR code">
+                  <p>Scan this code in your UPI app and pay the order amount shown above.</p>
+                  <form method="post" action="{{ url_for('submit_upi_payment', order_id=order._id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="payment_channel" value="upi_qr">
+                    <label for="qr-payment-reference-{{ order._id }}">Transaction ID</label>
+                    <input id="qr-payment-reference-{{ order._id }}" name="payment_reference" maxlength="100" placeholder="Enter the transaction ID" required>
+                    <button class="button button-primary" type="submit">Submit transaction ID <span aria-hidden="true">✓</span></button>
+                  </form>
+                </div>
+              </details>
+            </div>
+          </div>
+        </section>
         {% elif order.status == 'payment_submitted' %}
         <section class="customer-order-extra"><div class="payment-waiting"><strong>Payment reported</strong><span>Raju Printer will confirm receipt before processing your order.</span>{% if order.payment_reference %}<span>Reference: {{ order.payment_reference }}</span>{% endif %}</div></section>
         {% endif %}
