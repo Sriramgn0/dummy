@@ -1,8 +1,10 @@
 import hmac
 import hashlib
+import io
 import os
 import re
 import secrets
+import zipfile
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
@@ -21,6 +23,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     send_from_directory,
     session,
     url_for,
@@ -507,6 +510,12 @@ def tracking_id_for(order_id):
 
 
 def order_documents(order):
+    if order.get("items"):
+        return [
+            document
+            for item in order["items"]
+            for document in item.get("documents", [])
+        ]
     documents = order.get("documents")
     if documents:
         return documents
@@ -514,11 +523,46 @@ def order_documents(order):
         "document_name": order["document_name"],
         "display_name": order.get("display_name", order["document_name"]),
         "stored_name": order["stored_name"],
+        "file_deleted": order.get("file_deleted", False),
+    }]
+
+
+def order_document_entries(order):
+    if order.get("items"):
+        for item_index, item in enumerate(order["items"]):
+            for document_index, document in enumerate(item.get("documents", [])):
+                yield document, f"items.{item_index}.documents.{document_index}"
+        return
+    if order.get("documents"):
+        for document_index, document in enumerate(order["documents"]):
+            yield document, f"documents.{document_index}"
+        return
+    if order.get("stored_name"):
+        yield {
+            "document_name": order.get("document_name", order["stored_name"]),
+            "display_name": order.get("display_name", order["stored_name"]),
+            "stored_name": order["stored_name"],
+            "file_deleted": order.get("file_deleted", False),
+        }, ""
+
+
+def order_items(order):
+    if order.get("items"):
+        return order["items"]
+    return [{
+        "product_category": order.get("product_category", "cad"),
+        "paper_size": order.get("paper_size", ""),
+        "print_type": order.get("print_type"),
+        "print_sides": order.get("print_sides"),
+        "copies": order.get("copies", 1),
+        "sheet_count": order.get("sheet_count"),
+        "documents": order_documents(order),
     }]
 
 
 app.jinja_env.filters["money"] = money
 app.jinja_env.globals["order_documents"] = order_documents
+app.jinja_env.globals["order_items"] = order_items
 
 
 def mongo_unavailable():
@@ -812,6 +856,196 @@ def completed_orders():
     )
 
 
+def completed_file_cleanup_filters(source):
+    customer_id = source.get("customer_id", "").strip()
+    start_date = source.get("start_date", "").strip()
+    end_date = source.get("end_date", "").strip()
+    min_size_raw = source.get("min_size_mb", "").strip()
+    max_size_raw = source.get("max_size_mb", "").strip()
+    try:
+        min_size_mb = Decimal(min_size_raw) if min_size_raw else None
+        max_size_mb = Decimal(max_size_raw) if max_size_raw else None
+        if customer_id:
+            ObjectId(customer_id)
+        if start_date:
+            start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            start = None
+        if end_date:
+            end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            end = None
+    except (InvalidId, InvalidOperation, ValueError, TypeError):
+        abort(400, description="Choose a valid customer, file size, and date range.")
+    if (
+        (min_size_mb is not None and (not min_size_mb.is_finite() or min_size_mb < 0))
+        or (max_size_mb is not None and (not max_size_mb.is_finite() or max_size_mb < 0))
+        or (min_size_mb is not None and max_size_mb is not None and min_size_mb > max_size_mb)
+        or (start is not None and end is not None and start > end)
+    ):
+        abort(400, description="Enter a valid file-size range and order date range.")
+    return {
+        "customer_id": customer_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "min_size_mb": min_size_raw,
+        "max_size_mb": max_size_raw,
+        "min_size_value": min_size_mb,
+        "max_size_value": max_size_mb,
+    }
+
+
+def completed_file_cleanup_candidates(database, filters):
+    query = {"status": {"$in": ["delivered", "cancelled"]}}
+    if filters["customer_id"]:
+        query["user_id"] = ObjectId(filters["customer_id"])
+    if filters["start_date"]:
+        query.setdefault("created_at", {})["$gte"] = datetime.strptime(
+            filters["start_date"], "%Y-%m-%d"
+        ).replace(tzinfo=timezone.utc)
+    if filters["end_date"]:
+        query.setdefault("created_at", {})["$lt"] = datetime.strptime(
+            filters["end_date"], "%Y-%m-%d"
+        ).replace(tzinfo=timezone.utc) + timedelta(days=1)
+
+    upload_root = UPLOAD_FOLDER.resolve()
+    for order in database.orders.find(query).sort("created_at", DESCENDING):
+        for document, document_path in order_document_entries(order):
+            if document.get("file_deleted"):
+                continue
+            if not document.get("stored_name"):
+                app.logger.warning(
+                    "Completed-order file cleanup skipped a document without a stored file for order %s.",
+                    order["_id"],
+                )
+                continue
+            stored_path = (upload_root / document["stored_name"]).resolve()
+            if stored_path.parent != upload_root:
+                abort(
+                    409,
+                    description="A completed order contains an unsafe stored-file path; cleanup was stopped.",
+                )
+            if not stored_path.is_file():
+                app.logger.warning(
+                    "Completed-order file cleanup skipped a missing file for order %s.",
+                    order["_id"],
+                )
+                continue
+            size_bytes = stored_path.stat().st_size
+            size_mb = Decimal(size_bytes) / Decimal(1024 * 1024)
+            if (
+                filters["min_size_value"] is not None
+                and size_mb < filters["min_size_value"]
+            ) or (
+                filters["max_size_value"] is not None
+                and size_mb > filters["max_size_value"]
+            ):
+                continue
+            yield {
+                "order": order,
+                "document": document,
+                "document_path": document_path,
+                "stored_path": stored_path,
+                "size_bytes": size_bytes,
+            }
+
+
+@app.route("/admin/orders/completed/files/cleanup", methods=["GET", "POST"])
+@admin_required
+def cleanup_completed_order_files():
+    database = get_database()
+    customers = list(
+        database.users.find({"role": "customer"}, {"password_hash": 0}).sort("name", 1)
+    )
+
+    def render_cleanup(filters=None, preview=None, matched_files=None):
+        return render_template(
+            "admin_file_cleanup.html",
+            customers=customers,
+            filters=filters or {
+                "customer_id": "",
+                "start_date": "",
+                "end_date": "",
+                "min_size_mb": "",
+                "max_size_mb": "",
+            },
+            preview=preview,
+            matched_files=matched_files or [],
+        )
+
+    if request.method == "GET" and not request.args.get("preview"):
+        return render_cleanup()
+
+    filters = completed_file_cleanup_filters(
+        request.form if request.method == "POST" else request.args
+    )
+    if request.method == "GET" or request.form.get("confirm_delete") != "yes":
+        matched_files = []
+        count = 0
+        size_bytes = 0
+        for candidate in completed_file_cleanup_candidates(database, filters):
+            count += 1
+            size_bytes += candidate["size_bytes"]
+            if len(matched_files) < 100:
+                matched_files.append({
+                    "tracking_id": candidate["order"].get(
+                        "tracking_id", f"RP-{candidate['order']['_id']}"
+                    ),
+                    "customer_name": candidate["order"].get("customer_name", "Customer"),
+                    "file_name": candidate["document"].get(
+                        "document_name", candidate["document"]["stored_name"]
+                    ),
+                    "size_bytes": candidate["size_bytes"],
+                })
+        if request.method == "POST":
+            flash("Confirm the deletion checkbox before removing files.", "error")
+        return render_cleanup(
+            filters,
+            {"count": count, "size_bytes": size_bytes},
+            matched_files,
+        )
+
+    deleted_count = 0
+    deleted_size_bytes = 0
+    for candidate in completed_file_cleanup_candidates(database, filters):
+        document_path = candidate["document_path"]
+        deleted_field = f"{document_path}.file_deleted" if document_path else "file_deleted"
+        deleted_at_field = (
+            f"{document_path}.file_deleted_at" if document_path else "file_deleted_at"
+        )
+        result = database.orders.update_one(
+            {
+                "_id": candidate["order"]["_id"],
+                "status": {"$in": ["delivered", "cancelled"]},
+                deleted_field: {"$ne": True},
+            },
+            {"$set": {deleted_field: True, deleted_at_field: datetime.now(timezone.utc)}},
+        )
+        if not result.modified_count:
+            app.logger.warning(
+                "Completed-order file cleanup skipped a file changed during cleanup for order %s.",
+                candidate["order"]["_id"],
+            )
+            continue
+        try:
+            candidate["stored_path"].unlink()
+        except OSError:
+            database.orders.update_one(
+                {"_id": candidate["order"]["_id"]},
+                {"$unset": {deleted_field: "", deleted_at_field: ""}},
+            )
+            raise
+        deleted_count += 1
+        deleted_size_bytes += candidate["size_bytes"]
+
+    flash(
+        f"Deleted {deleted_count} completed-order file(s), freeing "
+        f"{deleted_size_bytes / (1024 * 1024):.2f} MB. Order records were kept.",
+        "success",
+    )
+    return redirect(url_for("cleanup_completed_order_files"))
+
+
 @app.get("/admin/prices/digital")
 @admin_required
 def digital_prices():
@@ -844,39 +1078,54 @@ def new_order():
 def create_order():
     if g.user["role"] != "customer":
         abort(403)
-    uploaded_files = request.files.getlist("documents")
-    if not uploaded_files:
-        uploaded_files = request.files.getlist("document")
-    uploaded_files = [uploaded for uploaded in uploaded_files if uploaded.filename]
-    if not uploaded_files:
-        flash("Choose at least one document to print.", "error")
-        return redirect(url_for("new_order"))
-    original_names = []
-    for uploaded in uploaded_files:
-        original_name = secure_filename(uploaded.filename)
-        extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
-        if not original_name or extension not in ALLOWED_EXTENSIONS:
-            flash("Upload PDF, Word, JPG, or PNG documents only.", "error")
+    cart_count = request.form.get("cart_items_count")
+    if cart_count is not None:
+        try:
+            item_count = int(cart_count)
+        except ValueError:
+            item_count = 0
+        if not 1 <= item_count <= 50:
+            flash("Add between 1 and 50 items to your cart.", "error")
             return redirect(url_for("new_order"))
-        original_names.append(original_name)
-    try:
-        copies = int(request.form.get("copies", "1"))
-    except ValueError:
-        copies = 0
-    if not 1 <= copies <= 1000:
-        flash("Copies must be a number between 1 and 1,000.", "error")
+        requested_items = []
+        for index in range(item_count):
+            prefix = f"cart_items[{index}]"
+            requested_items.append({
+                "product_category": request.form.get(f"{prefix}[product_category]", ""),
+                "copies": request.form.get(f"{prefix}[copies]", ""),
+                "paper_size": request.form.get(f"{prefix}[paper_size]", ""),
+                "print_type": request.form.get(f"{prefix}[print_type]", ""),
+                "print_sides": request.form.get(f"{prefix}[print_sides]", ""),
+                "cad_size": request.form.get(f"{prefix}[cad_size]", ""),
+                "notes": request.form.get(f"{prefix}[notes]", ""),
+                "uploads": [
+                    file for file in request.files.getlist(f"{prefix}[documents]")
+                    if file.filename
+                ],
+            })
+    else:
+        uploaded_files = request.files.getlist("documents")
+        if not uploaded_files:
+            uploaded_files = request.files.getlist("document")
+        requested_items = [{
+            "product_category": request.form.get("product_category", "digital_printing"),
+            "copies": request.form.get("copies", "1"),
+            "paper_size": request.form.get("paper_size", ""),
+            "print_type": request.form.get("print_type", ""),
+            "print_sides": request.form.get("print_sides", "front_only"),
+            "cad_size": request.form.get("cad_size", ""),
+            "notes": request.form.get("notes", ""),
+            "uploads": [file for file in uploaded_files if file.filename],
+        }]
+    if any(not item["uploads"] for item in requested_items):
+        flash("Each cart item must include at least one document.", "error")
         return redirect(url_for("new_order"))
 
-    category = request.form.get("product_category", "digital_printing")
-    if category not in {"digital_printing", "cad"}:
-        flash("Choose digital printing or CAD printing.", "error")
-        return redirect(url_for("new_order"))
     database = get_database()
     delivery_type = request.form.get("delivery_type", "pickup")
     if delivery_type not in {"pickup", "delivery"}:
         flash("Choose pickup or delivery.", "error")
         return redirect(url_for("new_order"))
-    notes = request.form.get("notes", "").strip()[:500]
     if delivery_type == "delivery":
         address_choice = request.form.get("delivery_address_choice", "")
         saved_addresses = customer_addresses(g.user)
@@ -894,94 +1143,126 @@ def create_order():
             return redirect(url_for("new_order"))
     else:
         delivery_address = ""
-    delivery_fee_paise = (
-        digital_price_map(database).get("delivery_fee_paise", 0)
-        if delivery_type == "delivery"
-        else 0
-    )
-    if category == "digital_printing":
-        paper_size = request.form.get("paper_size", "")
-        print_type = request.form.get("print_type", "")
-        print_sides = request.form.get("print_sides", "front_only")
-        if (
-            paper_size not in DIGITAL_SIZES
-            or print_type not in PRINT_TYPES
-            or print_sides not in PRINT_SIDES
-        ):
-            flash("Choose a valid digital print size, mode, and side option.", "error")
+    delivery_fee_paise = digital_price_map(database).get("delivery_fee_paise", 0) if delivery_type == "delivery" else 0
+
+    order_id = ObjectId()
+    order_tracking_id = tracking_id_for(order_id)
+    items = []
+    saved_paths = []
+    for item_index, requested in enumerate(requested_items):
+        category = requested["product_category"]
+        if category not in {"digital_printing", "cad"}:
+            flash("Choose digital printing or CAD printing for every cart item.", "error")
             return redirect(url_for("new_order"))
-        rate = database.digital_prices.find_one(
-            {
+        try:
+            copies = int(requested["copies"])
+        except ValueError:
+            copies = 0
+        if not 1 <= copies <= 1000:
+            flash("Prints per file must be a number between 1 and 1,000.", "error")
+            return redirect(url_for("new_order"))
+        notes = requested["notes"].strip()[:500]
+        if category == "digital_printing":
+            paper_size = requested["paper_size"]
+            print_type = requested["print_type"]
+            print_sides = requested["print_sides"]
+            if paper_size not in DIGITAL_SIZES or print_type not in PRINT_TYPES or print_sides not in PRINT_SIDES:
+                flash("Choose a valid digital print size, mode, and side option for every item.", "error")
+                return redirect(url_for("new_order"))
+            rate = database.digital_prices.find_one({
                 "service": "digital_printing",
                 "size": paper_size,
                 "print_type": print_type,
                 "print_sides": print_sides,
-            }
-        )
-        if not rate or rate.get("price_paise", 0) <= 0:
-            flash("Digital printing is not priced for that size and mode yet.", "error")
-            return redirect(url_for("new_order"))
-        price_each_paise = rate["price_paise"]
-        file_count = len(uploaded_files)
-        sheet_count = (
-            (file_count + 1) // 2 if print_sides == "front_back" else file_count
-        )
-        quote_paise = price_each_paise * copies * sheet_count + delivery_fee_paise
-        status = "awaiting_payment"
-        print_label = "colour" if print_type == "color" else "black-and-white"
-        initial_update = order_update(
-            status,
-            f"Digital printing estimate: ₹{quote_paise / 100:,.2f} "
-            f"({sheet_count} sheet{'s' if sheet_count != 1 else ''} per copy × "
-            f"{copies} cop{'ies' if copies != 1 else 'y'} × "
-            f"₹{price_each_paise / 100:,.2f} per sheet; {file_count} "
-            f"file{'s' if file_count != 1 else ''}"
-            f"{' printed front and back' if print_sides == 'front_back' else ''})."
-            + (f" Includes ₹{delivery_fee_paise / 100:,.2f} delivery." if delivery_fee_paise else ""),
-        )
-    else:
-        paper_size = request.form.get("cad_size", "")
-        if paper_size not in CAD_SIZES:
-            flash("Choose a valid CAD drawing size.", "error")
-            return redirect(url_for("new_order"))
-        if paper_size == "Custom" and not notes:
-            flash("Add the required extra notes for a custom CAD size.", "error")
-            return redirect(url_for("new_order"))
-        print_type = "cad"
-        print_sides = None
-        price_each_paise = None
-        sheet_count = None
-        quote_paise = None
-        status = "pending_quote"
-        print_label = "CAD"
-        initial_update = order_update(
-            status,
-            "CAD order received. Waiting for a quotation, including any delivery charges."
-            if delivery_type == "delivery"
-            else "CAD order received. Waiting for a quotation.",
-        )
-
-    order_id = ObjectId()
-    order_tracking_id = tracking_id_for(order_id)
-    documents = []
-    saved_paths = []
-    for uploaded, original_name in zip(uploaded_files, original_names):
-        extension = original_name.rsplit(".", 1)[-1].lower()
-        stored_name = f"{order_tracking_id}_{uuid4().hex}.{extension}"
-        display_name = f"{order_tracking_id}_{original_name}"
-        documents.append({
-            "document_name": original_name,
-            "display_name": display_name,
-            "stored_name": stored_name,
+            })
+            if not rate or rate.get("price_paise", 0) <= 0:
+                flash(f"Digital printing is not priced for {paper_size} in the selected mode.", "error")
+                return redirect(url_for("new_order"))
+            price_each_paise = rate["price_paise"]
+            file_count = len(requested["uploads"])
+            sheet_count = (file_count + 1) // 2 if print_sides == "front_back" else file_count
+            estimate_paise = price_each_paise * copies * sheet_count
+        else:
+            paper_size = requested["cad_size"]
+            if paper_size not in CAD_SIZES:
+                flash("Choose a valid CAD drawing size for every item.", "error")
+                return redirect(url_for("new_order"))
+            if paper_size == "Custom" and not notes:
+                flash("Add the required extra notes for a custom CAD size.", "error")
+                return redirect(url_for("new_order"))
+            print_type = "cad"
+            print_sides = None
+            price_each_paise = None
+            sheet_count = None
+            estimate_paise = None
+        documents = []
+        for uploaded in requested["uploads"]:
+            original_name = secure_filename(uploaded.filename)
+            extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+            if not original_name or extension not in ALLOWED_EXTENSIONS:
+                flash("Upload PDF, Word, JPG, or PNG documents only.", "error")
+                return redirect(url_for("new_order"))
+            stored_name = (
+                f"{order_tracking_id}_{item_index + 1}_"
+                f"{secure_filename(paper_size)}_{copies}_"
+                f"{len(documents) + 1}.{extension}"
+            )
+            display_name = f"{order_tracking_id}_{item_index + 1}_{original_name}"
+            documents.append({
+                "document_name": original_name,
+                "display_name": display_name,
+                "stored_name": stored_name,
+                "item_index": item_index,
+            })
+            saved_paths.append((uploaded, UPLOAD_FOLDER / stored_name))
+        items.append({
+            "product_category": category,
+            "documents": documents,
+            "file_count": len(documents),
+            "copies": copies,
+            "print_type": print_type,
+            "print_sides": print_sides,
+            "sheet_count": sheet_count,
+            "paper_size": paper_size,
+            "price_each_paise": price_each_paise,
+            "estimate_paise": estimate_paise,
+            "notes": notes,
         })
-        saved_paths.append(UPLOAD_FOLDER / stored_name)
+
+    categories = {item["product_category"] for item in items}
+    contains_cad = "cad" in categories
+    category = next(iter(categories)) if len(categories) == 1 else "mixed"
+    documents = [document for item in items for document in item["documents"]]
+    file_count = len(documents)
+    digital_estimate_paise = sum(item["estimate_paise"] or 0 for item in items)
+    quote_paise = None if contains_cad else digital_estimate_paise + delivery_fee_paise
+    status = "pending_quote" if contains_cad else "awaiting_payment"
+    distinct_sizes = {item["paper_size"] for item in items}
+    paper_size = next(iter(distinct_sizes)) if len(distinct_sizes) == 1 else "Multiple"
+    copies = items[0]["copies"] if len({item["copies"] for item in items}) == 1 else 1
+    sheet_count = sum(item["sheet_count"] or 0 for item in items)
+    notes = "\n".join(item["notes"] for item in items if item["notes"])
+    if contains_cad:
+        cad_count = sum(item["product_category"] == "cad" for item in items)
+        initial_note = (
+            f"Order received with {len(items)} item(s), including {cad_count} CAD item(s). "
+            "Waiting for a quotation for the full cart."
+        )
+        print_label = "mixed CAD and digital" if "digital_printing" in categories else "CAD"
+    else:
+        initial_note = f"Digital printing estimate: ₹{quote_paise / 100:,.2f} across {len(items)} item(s)."
+        if delivery_fee_paise:
+            initial_note += f" Includes ₹{delivery_fee_paise / 100:,.2f} delivery."
+        print_label = "digital printing"
+
     order = {
         "_id": order_id,
         "tracking_id": order_tracking_id,
         "user_id": g.user["_id"],
         "customer_name": g.user["name"],
+        "items": items,
         "documents": documents,
-        "file_count": len(documents),
+        "file_count": file_count,
         "document_name": documents[0]["document_name"],
         "display_name": (
             documents[0]["display_name"]
@@ -991,28 +1272,30 @@ def create_order():
         "stored_name": documents[0]["stored_name"],
         "copies": copies,
         "product_category": category,
-        "print_type": print_type,
-        "print_sides": print_sides,
+        "contains_cad": contains_cad,
+        "print_type": items[0]["print_type"] if len(items) == 1 else None,
+        "print_sides": items[0]["print_sides"] if len(items) == 1 else None,
         "sheet_count": sheet_count,
         "paper_size": paper_size,
-        "price_each_paise": price_each_paise,
+        "price_each_paise": items[0]["price_each_paise"] if len(items) == 1 else None,
         "delivery_type": delivery_type,
         "delivery_address": delivery_address,
         "delivery_fee_paise": delivery_fee_paise,
+        "digital_estimate_paise": digital_estimate_paise,
         "notes": notes,
         "created_at": datetime.now(timezone.utc),
         "status": status,
-        "updates": [initial_update],
+        "updates": [order_update(status, initial_note)],
         "quote_paise": quote_paise,
         "payment_method": "upi",
         "payment_reference": None,
     }
     try:
-        for uploaded, path in zip(uploaded_files, saved_paths):
+        for uploaded, path in saved_paths:
             uploaded.save(path)
         get_database().orders.insert_one(order)
     except (OSError, PyMongoError):
-        for path in saved_paths:
+        for _, path in saved_paths:
             path.unlink(missing_ok=True)
         raise
     if (
@@ -1029,11 +1312,15 @@ def create_order():
         )
     notify_admin(
         f"New {print_label} order {order_tracking_id} from {g.user['name']}: "
-        f"{copies} copies of {len(documents)} document(s), size {paper_size}, "
-        f"{'front and back, ' if category == 'digital_printing' and print_sides == 'front_back' else ''}"
+        f"{len(items)} cart item(s), {file_count} document(s), "
         f"{delivery_type}."
     )
-    flash("Raju Printer will review your document and send you a quotation.", "order-sent")
+    flash(
+        "Raju Printer will review the CAD items and send you a quotation."
+        if contains_cad
+        else "Your order is ready for payment.",
+        "order-sent",
+    )
     return redirect(url_for("dashboard"))
 
 
@@ -1373,11 +1660,54 @@ def download_document(order_id, document_index=None):
     if document_index >= len(documents):
         abort(404)
     document = documents[document_index]
+    if document.get("file_deleted"):
+        abort(410, description="This file was deleted by an administrator.")
     return send_from_directory(
         UPLOAD_FOLDER,
         document["stored_name"],
         as_attachment=True,
         download_name=document["display_name"],
+    )
+
+
+@app.get("/admin/orders/<order_id>/download")
+@admin_required
+def download_order_files(order_id):
+    try:
+        order_object_id = ObjectId(order_id)
+    except (InvalidId, TypeError):
+        abort(404)
+    order = get_database().orders.find_one({"_id": order_object_id})
+    if not order:
+        abort(404)
+    documents = order_documents(order)
+    if not documents:
+        abort(404, description="This order has no files to download.")
+
+    customer_folder = secure_filename(order.get("customer_name", "")) or "customer"
+    order_number = secure_filename(
+        order.get("tracking_id", str(order["_id"]))
+    ) or str(order["_id"])
+    folder_name = f"{customer_folder}_{order_number}"
+    archive = io.BytesIO()
+    upload_root = UPLOAD_FOLDER.resolve()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+        for document in documents:
+            if document.get("file_deleted"):
+                continue
+            stored_path = (upload_root / document["stored_name"]).resolve()
+            if stored_path.parent != upload_root or not stored_path.is_file():
+                abort(404, description="One or more files for this order are unavailable.")
+            archive_name = secure_filename(Path(document["stored_name"]).name)
+            zip_file.write(stored_path, f"{folder_name}/{archive_name}")
+        if not zip_file.namelist():
+            abort(404, description="This order has no available files to download.")
+    archive.seek(0)
+    return send_file(
+        archive,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"{folder_name}.zip",
     )
 
 
