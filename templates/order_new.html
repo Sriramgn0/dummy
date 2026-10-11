@@ -6,29 +6,30 @@
   <div class="topbar-right"><a class="button button-quiet order-back-link" href="{{ url_for('dashboard') }}">My orders <span aria-hidden="true">↗</span></a><span class="user-chip"><span class="avatar">{{ current_user.name[0]|upper }}</span><span>{{ current_user.name }}</span></span></div>
 </header>
 <main class="workspace order-create-workspace">
-  <div class="page-heading"><div><p class="eyebrow"><a class="breadcrumb-link" href="{{ url_for('dashboard') }}">YOUR ORDERS</a> <span class="eyebrow-divider">/</span> NEW ORDER</p><h1>What can we print for you?</h1><p class="muted">Choose a service, upload your file, and review the details before sending it in.</p></div><span class="heading-stamp">RP <span>—</span> 02</span></div>
+  <div class="page-heading"><div><p class="eyebrow"><a class="breadcrumb-link" href="{{ url_for('dashboard') }}">YOUR ORDERS</a> <span class="eyebrow-divider">/</span> NEW ORDER</p><h1>What can we print for you?</h1><p class="muted">Choose a service, upload your files, and review the details before sending them in.</p></div><span class="heading-stamp">RP <span>—</span> 02</span></div>
   <section class="order-layout">
     <div class="new-order-section">
-      <div class="section-heading"><div><span class="section-index">01</span><h2>Order details</h2></div><span class="section-note">PDF, DOC, DOCX, JPG, PNG · 20 MB max</span></div>
+      <div class="section-heading"><div><span class="section-index">01</span><h2>Order details</h2></div><span class="section-note">PDF, DOC, DOCX, JPG, PNG · 20 MB total max</span></div>
       <script id="digital-price-data" type="application/json">{{ digital_prices|tojson }}</script>
       <form class="order-form" method="post" action="{{ url_for('create_order') }}" enctype="multipart/form-data" data-order-form>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <fieldset class="service-switch"><legend>Choose a print service</legend><label class="service-choice"><input type="radio" name="product_category" value="digital_printing" checked><span><strong>Digital printing</strong><small>Priced by sheet</small></span></label><label class="service-choice"><input type="radio" name="product_category" value="cad"><span><strong>CAD drawing</strong><small>Quotation from our team</small></span></label></fieldset>
-        <label class="upload-zone" for="document">
-          <input id="document" name="document" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" required>
-          <span class="upload-symbol" aria-hidden="true">↑</span><span class="upload-title" data-file-name>Choose a document</span><span class="upload-hint">or drop it here</span>
+        <fieldset class="service-switch"><legend>Choose a print service</legend><label class="service-choice"><input type="radio" name="product_category" value="digital_printing" checked><span><strong>Digital printing</strong><small>Priced by file and print</small></span></label><label class="service-choice"><input type="radio" name="product_category" value="cad"><span><strong>CAD drawing</strong><small>Quotation from our team</small></span></label></fieldset>
+        <label class="upload-zone" for="documents">
+          <input id="documents" name="documents" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" multiple required>
+          <span class="upload-symbol" aria-hidden="true">↑</span><span class="upload-title" data-file-name>Choose documents</span><span class="upload-hint">Select multiple files, or choose files again to add more</span>
         </label>
+        <ul class="selected-files" data-file-list hidden aria-live="polite"></ul>
         <div class="form-grid">
-          <div class="field"><label for="copies">Number of sheets</label><input id="copies" name="copies" type="number" min="1" max="1000" value="1" required data-price-qty></div>
+          <div class="field"><label for="copies">Prints per file</label><input id="copies" name="copies" type="number" min="1" max="1000" value="1" required data-price-qty></div>
           <div class="field" data-digital-field><label for="print_type">Print in</label><select id="print_type" name="print_type" data-price-mode><option value="black_white">Black &amp; white</option><option value="color">Full colour</option></select></div>
           <div class="field" data-digital-field><label for="paper_size">Paper size</label><select id="paper_size" name="paper_size" data-price-size><option>A4</option><option>A3</option><option>A5</option><option>Letter</option></select></div>
           <div class="field" data-cad-field hidden><label for="cad_size">CAD drawing size</label><select id="cad_size" name="cad_size" disabled><option>A0</option><option>A1</option><option>A2</option><option>A4</option><option>Custom</option></select></div>
         </div>
         <fieldset class="delivery-switch"><legend>Pickup or delivery?</legend><label class="service-choice"><input type="radio" name="delivery_type" value="pickup" checked><span><strong>Store pickup</strong><small>No delivery charge</small></span></label><label class="service-choice"><input type="radio" name="delivery_type" value="delivery"><span><strong>Deliver to me</strong><small>Delivery fee shown in estimate</small></span></label></fieldset>
         <div class="field delivery-address-field" data-delivery-address hidden><label for="delivery_address">Delivery address</label><textarea id="delivery_address" name="delivery_address" rows="3" maxlength="500" autocomplete="street-address" disabled>{{ customer_address }}</textarea><small>You can edit this address for this order only.</small></div>
-        <section class="price-preview" data-price-preview aria-live="polite"><div><span class="eyebrow">DIGITAL PRINT ESTIMATE</span><strong data-price-total>Rates not set</strong><small data-price-unit></small></div><span data-price-hint>Ask the print desk to configure digital rates.</span></section>
+        <section class="price-preview" data-price-preview aria-live="polite"><div><span class="eyebrow">DIGITAL PRINT ESTIMATE</span><strong data-price-total>Rates not set</strong><small data-price-unit></small></div><span data-price-hint>Select files to see the estimate.</span></section>
         <div class="field"><label for="notes" data-notes-label>Anything we should know <span class="optional">OPTIONAL</span></label><textarea id="notes" name="notes" rows="2" maxlength="500" placeholder="Paper finish, binding, or other instructions" data-order-notes></textarea><small data-notes-hint hidden>Custom CAD size requires extra notes, such as the sheet dimensions.</small></div>
-        <div class="form-footer"><span data-order-help>Price is based on the selected rate per sheet.</span><button class="button button-primary" type="submit" data-order-submit><span data-order-label>Continue to payment</span><span aria-hidden="true">↗</span></button></div>
+        <div class="form-footer"><span data-order-help>Estimate = files × prints per file × configured rate.</span><button class="button button-primary" type="submit" data-order-submit><span data-order-label>Continue to payment</span><span aria-hidden="true">↗</span></button></div>
       </form>
     </div>
     <aside class="process-note"><span class="process-mark">02</span><p class="eyebrow">FROM FILE TO FINISH</p><ol><li><span>01</span> Send your document</li><li><span>02</span> Review the price or quote</li><li><span>03</span> Pay by UPI</li><li><span>04</span> Pick up or receive delivery</li></ol><p class="process-foot">Digital estimates include the configured delivery fee. CAD delivery charges are included in the quotation.</p></aside>
