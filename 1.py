@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 from pathlib import Path
 from uuid import uuid4
+from xml.sax.saxutils import escape
 import certifi
 import requests
 from bson import ObjectId
@@ -30,6 +31,10 @@ from flask import (
 )
 from pymongo import DESCENDING, MongoClient
 from pymongo.errors import PyMongoError
+from reportlab.lib.pagesizes import A6
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -147,7 +152,7 @@ app.config.update(
     MONGO_URI=os.environ.get("MONGO_URI", "").strip(),
     MONGO_DATABASE=os.environ.get("MONGO_DATABASE", "raju_printer"),
     UPI_ID=os.environ.get("RAJU_UPI_ID", ""),
-    UPI_PAYEE_NAME=os.environ.get("RAJU_UPI_NAME", "Raju Printer"),
+    UPI_PAYEE_NAME=os.environ.get("RAJU_UPI_NAME", "CAD Master"),
     RAJU_ENV=RAJU_ENV,
     FLASK_DEBUG=os.environ.get("FLASK_DEBUG", "false").lower() == "true",
     RAJU_DEMO_MODE=os.environ.get("RAJU_DEMO_MODE", "false").lower() == "true",
@@ -253,7 +258,7 @@ def seed_initial_accounts(database):
                     if demo_mode
                     else app.config["BOOTSTRAP_ADMIN_USERNAME"]
                 ).lower(),
-                "name": "Raju Printer Admin",
+                "name": "CAD Master Admin",
                 "password": admin_password,
                 "role": "admin",
             }
@@ -338,7 +343,7 @@ def notify_customer(user_id, message):
 
 def notify_admin(message):
     return send_whatsapp(
-        app.config["WHATSAPP_ADMIN_NUMBER"], "Raju Printer", message
+        app.config["WHATSAPP_ADMIN_NUMBER"], "CAD Master", message
     )
 
 
@@ -1316,7 +1321,7 @@ def create_order():
         f"{delivery_type}."
     )
     flash(
-        "Raju Printer will review the CAD items and send you a quotation."
+        "CAD Master will review the CAD items and send you a quotation."
         if contains_cad
         else "Your order is ready for payment.",
         "order-sent",
@@ -1670,6 +1675,37 @@ def download_document(order_id, document_index=None):
     )
 
 
+def delivery_address_pdf(order):
+    pdf_buffer = io.BytesIO()
+    document = SimpleDocTemplate(
+        pdf_buffer,
+        pagesize=A6,
+        rightMargin=10 * mm,
+        leftMargin=10 * mm,
+        topMargin=10 * mm,
+        bottomMargin=10 * mm,
+        title=f"Delivery address {order.get('tracking_id', order['_id'])}",
+    )
+    styles = getSampleStyleSheet()
+    order_number = escape(str(order.get("tracking_id", order["_id"])))
+    customer_name = escape(str(order.get("customer_name", "Customer")))
+    address = escape(str(order.get("delivery_address", ""))).replace("\n", "<br/>")
+    story = [
+        Paragraph("DELIVERY ADDRESS", styles["Title"]),
+        Spacer(1, 8 * mm),
+        Paragraph(f"<b>Order:</b> {order_number}", styles["BodyText"]),
+        Spacer(1, 3 * mm),
+        Paragraph(f"<b>Customer:</b> {customer_name}", styles["BodyText"]),
+        Spacer(1, 6 * mm),
+        Paragraph("<b>Deliver to:</b>", styles["Heading2"]),
+        Spacer(1, 2 * mm),
+        Paragraph(address, styles["BodyText"]),
+    ]
+    document.build(story)
+    pdf_buffer.seek(0)
+    return pdf_buffer.read()
+
+
 @app.get("/admin/orders/<order_id>/download")
 @admin_required
 def download_order_files(order_id):
@@ -1700,6 +1736,11 @@ def download_order_files(order_id):
                 abort(404, description="One or more files for this order are unavailable.")
             archive_name = secure_filename(Path(document["stored_name"]).name)
             zip_file.write(stored_path, f"{folder_name}/{archive_name}")
+        if order.get("delivery_type") == "delivery" and order.get("delivery_address"):
+            zip_file.writestr(
+                f"{folder_name}/delivery_address_A6.pdf",
+                delivery_address_pdf(order),
+            )
         if not zip_file.namelist():
             abort(404, description="This order has no available files to download.")
     archive.seek(0)
@@ -1756,7 +1797,7 @@ def submit_upi_payment(order_id):
     notify_admin(
         f"UPI payment reported for {order.get('tracking_id', order['_id'])} by {g.user['name']}: ₹{order['quote_paise'] / 100:,.2f}. Confirm receipt in the admin dashboard."
     )
-    flash("Payment reported. Raju Printer will confirm it before processing your order.", "success")
+    flash("Payment reported. CAD Master will confirm it before processing your order.", "success")
     return redirect(url_for("dashboard"))
 
 
@@ -1775,7 +1816,7 @@ def confirm_upi_payment(order_id):
                 "paid_at": datetime.now(timezone.utc),
                 "payment_confirmed_by": g.user["_id"],
             },
-            "$push": {"updates": order_update("paid", "UPI payment received and confirmed by Raju Printer.")},
+            "$push": {"updates": order_update("paid", "UPI payment received and confirmed by CAD Master.")},
         },
     )
     if not result.matched_count:

@@ -20,13 +20,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: var(--font-display); font-size: 21px; font-weight: 700; text-decoration: none; letter-spacing: 0; }
 .brand-thin { font-weight: 500; }
-.brand-mark { display: grid; width: 25px; height: 25px; grid-template-columns: repeat(2, 1fr); gap: 3px; transform: rotate(-5deg); }
-.brand-mark i { display: block; background: var(--blue); border-radius: 1px; }
-.brand-mark i:nth-child(2) { background: var(--orange); }
-.brand-mark i:nth-child(3) { background: #d6a83d; }
+.brand-logo { display: block; width: 42px; height: 40px; border-radius: 2px; object-fit: contain; background: #fff; }
 .brand-light { color: #fffefa; }
-.brand-light .brand-mark i { background: #f9f4e8; }
-.brand-light .brand-mark i:nth-child(2) { background: #f58a62; }
 .eyebrow { margin: 0; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
 .eyebrow-light { color: #c6d1eb; }
 .eyebrow-divider { padding: 0 7px; color: #b1b4ad; }
@@ -88,7 +83,7 @@ a { color: inherit; }
 /* Customer and admin desks */
 .topbar { display: flex; height: 67px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 0 clamp(20px, 6vw, 88px); background: var(--white); }
 .topbar .brand { font-size: 19px; }
-.topbar .brand-mark { width: 22px; height: 22px; }
+.topbar .brand-logo { width: 36px; height: 34px; }
 .topbar-right { display: flex; align-items: center; gap: 19px; }
 .topbar-right form { display: flex; }
 .customer-header-nav { display: flex; align-items: center; gap: 6px; }
@@ -502,7 +497,7 @@ a { color: inherit; }
   .panel-bottom { width: 100%; }
   .topbar { height: 59px; padding: 0 17px; }
   .topbar .brand { font-size: 17px; }
-  .topbar .brand-mark { width: 20px; height: 20px; }
+  .topbar .brand-logo { width: 34px; height: 32px; }
   .topbar-right { gap: 10px; }
   .customer-topbar { gap: 8px; padding: 0 12px; }
   .customer-header-nav { gap: 0; }

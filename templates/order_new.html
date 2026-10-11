@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}New print order | Raju Printer{% endblock %}
+{% block title %}New print order | CAD Master{% endblock %}
 {% block content %}
 <header class="topbar customer-topbar">
-  <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+  <a class="brand" href="{{ url_for('dashboard') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
   <nav class="customer-header-nav" aria-label="Customer navigation">
     <a href="{{ url_for('new_order') }}" {% if request.endpoint == 'new_order' %}aria-current="page"{% endif %}>New order</a>
     <a href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}>Active orders</a>
@@ -43,6 +43,6 @@
     </div>
     <aside class="process-note"><span class="process-mark">02</span><p class="eyebrow">FROM FILE TO FINISH</p><ol><li><span>01</span> Send your document</li><li><span>02</span> Review the price or quote</li><li><span>03</span> Pay by UPI</li><li><span>04</span> Pick up or receive delivery</li></ol><p class="process-foot">Digital estimates include the configured delivery fee. CAD delivery charges are included in the quotation.</p></aside>
   </section>
-  <footer class="workspace-footer"><span>RAJU PRINTER <span class="footer-dot">·</span> PRINTED WITH CARE</span><a class="breadcrumb-link" href="{{ url_for('dashboard') }}">BACK TO YOUR ORDERS</a></footer>
+  <footer class="workspace-footer"><span>CAD MASTER <span class="footer-dot">·</span> PRINTED WITH CARE</span><a class="breadcrumb-link" href="{{ url_for('dashboard') }}">BACK TO YOUR ORDERS</a></footer>
 </main>
 {% endblock %}

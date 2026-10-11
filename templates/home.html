@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Raju Printer | Print orders{% endblock %}
+{% block title %}CAD Master | Print orders{% endblock %}
 {% block content %}
 <header class="home-topbar">
-  <a class="brand brand-light" href="{{ url_for('home') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
+  <a class="brand brand-light" href="{{ url_for('home') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
   <a class="home-admin-link" href="{{ url_for('login') }}">ADMIN SIGN IN <span aria-hidden="true">↗</span></a>
 </header>
 <main class="home-landing">
