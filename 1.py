@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 from pathlib import Path
 from uuid import uuid4
-
+import certifi
 import requests
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -57,11 +57,10 @@ FULFILLMENT_RANK = {
     "out_for_delivery": 4,
     "delivered": 5,
 }
-
+MONGO_URI="mongodb+srv://sriramgn0_db_user:GnUXSJqYjFfbhufK@cluster0.udbbaok.mongodb.net/raju_printer?appName=Cluster0"
 app = Flask(__name__)
 app.config.update(
     SECRET_KEY=os.environ.get("FLASK_SECRET_KEY", "local-development-key-change-me"),
-    MONGO_URI=os.environ.get("MONGO_URI", "mongodb://127.0.0.1:27017/"),
     MONGO_DATABASE=os.environ.get("MONGO_DATABASE", "raju_printer"),
     UPI_ID=os.environ.get("RAJU_UPI_ID", ""),
     UPI_PAYEE_NAME=os.environ.get("RAJU_UPI_NAME", "Raju Printer"),
@@ -80,19 +79,36 @@ UPLOAD_FOLDER.mkdir(exist_ok=True)
 
 def get_database():
     if "database" not in app.extensions:
-        client = MongoClient(app.config["MONGO_URI"], serverSelectionTimeoutMS=2000)
-        client.admin.command("ping")
-        database = client[app.config["MONGO_DATABASE"]]
-        database.users.create_index("username", unique=True)
-        database.orders.create_index([("user_id", 1), ("created_at", DESCENDING)])
-        database.orders.create_index("status")
-        database.digital_prices.create_index(
-            [("service", 1), ("size", 1), ("print_type", 1)], unique=True
-        )
-        database.orders.create_index("tracking_id", unique=True, sparse=True)
+        mongo_uri = "mongodb+srv://sriramgn0_db_user:GnUXSJqYjFfbhufK@cluster0.udbbaok.mongodb.net/raju_printer?appName=Cluster0"
+        if not mongo_uri:
+            raise RuntimeError(
+                "MONGO_URI is not configured. Set it to the connection string "
+                "copied from your MongoDB Atlas cluster."
+            )
+        client = None
+        try:
+            client = MongoClient(mongo_uri, serverSelectionTimeoutMS=10000, tlsCAFile=certifi.where())
+            client.admin.command("ping")
+            database = client[app.config["MONGO_DATABASE"]]
+            database.users.create_index("username", unique=True)
+            database.orders.create_index([("user_id", 1), ("created_at", DESCENDING)])
+            database.orders.create_index("status")
+            database.digital_prices.create_index(
+                [("service", 1), ("size", 1), ("print_type", 1)], unique=True
+            )
+            database.orders.create_index("tracking_id", unique=True, sparse=True)
+            seed_initial_accounts(database)
+        except PyMongoError as error:
+            if client is not None:
+                client.close()
+            app.logger.error(
+                "MongoDB connection/setup failed (%s). Check the Atlas URI and "
+                "database credentials, the Atlas IP access list, and DNS/network access.",
+                type(error).__name__,
+            )
+            raise
         app.extensions["mongo_client"] = client
         app.extensions["database"] = database
-        seed_initial_accounts(database)
     return app.extensions["database"]
 
 
@@ -110,15 +126,6 @@ def seed_initial_accounts(database):
                 "name": "Raju Printer Admin",
                 "password": admin_password,
                 "role": "admin",
-            }
-        )
-    if demo_mode:
-        accounts.append(
-            {
-                "username": os.environ.get("DEMO_CUSTOMER_USERNAME", "customer").lower(),
-                "name": "Demo Customer",
-                "password": os.environ.get("DEMO_CUSTOMER_PASSWORD", "Print123!"),
-                "role": "customer",
             }
         )
     for account in accounts:
@@ -285,7 +292,19 @@ def tracking_id_for(order_id):
     return f"RP-{datetime.now(timezone.utc):%y%m%d}-{str(order_id)[-8:].upper()}"
 
 
+def order_documents(order):
+    documents = order.get("documents")
+    if documents:
+        return documents
+    return [{
+        "document_name": order["document_name"],
+        "display_name": order.get("display_name", order["document_name"]),
+        "stored_name": order["stored_name"],
+    }]
+
+
 app.jinja_env.filters["money"] = money
+app.jinja_env.globals["order_documents"] = order_documents
 
 
 def mongo_unavailable():
@@ -299,8 +318,8 @@ def handle_database_error(_error):
 
 @app.errorhandler(413)
 def upload_too_large(_error):
-    flash("That file is over the 20 MB upload limit.", "error")
-    return redirect(url_for("dashboard"))
+    flash("This order exceeds the 20 MB total upload limit.", "error")
+    return redirect(url_for("new_order"))
 
 
 @app.route("/", methods=["GET"])
@@ -529,15 +548,21 @@ def new_order():
 def create_order():
     if g.user["role"] != "customer":
         abort(403)
-    uploaded = request.files.get("document")
-    if not uploaded or not uploaded.filename:
-        flash("Choose a document to print.", "error")
+    uploaded_files = request.files.getlist("documents")
+    if not uploaded_files:
+        uploaded_files = request.files.getlist("document")
+    uploaded_files = [uploaded for uploaded in uploaded_files if uploaded.filename]
+    if not uploaded_files:
+        flash("Choose at least one document to print.", "error")
         return redirect(url_for("new_order"))
-    original_name = secure_filename(uploaded.filename)
-    extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
-    if extension not in ALLOWED_EXTENSIONS:
-        flash("Upload a PDF, Word document, JPG, or PNG file.", "error")
-        return redirect(url_for("new_order"))
+    original_names = []
+    for uploaded in uploaded_files:
+        original_name = secure_filename(uploaded.filename)
+        extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+        if not original_name or extension not in ALLOWED_EXTENSIONS:
+            flash("Upload PDF, Word, JPG, or PNG documents only.", "error")
+            return redirect(url_for("new_order"))
+        original_names.append(original_name)
     try:
         copies = int(request.form.get("copies", "1"))
     except ValueError:
@@ -585,12 +610,13 @@ def create_order():
             flash("Digital printing is not priced for that size and mode yet.", "error")
             return redirect(url_for("new_order"))
         price_each_paise = rate["price_paise"]
-        quote_paise = price_each_paise * copies + delivery_fee_paise
+        file_count = len(uploaded_files)
+        quote_paise = price_each_paise * copies * file_count + delivery_fee_paise
         status = "awaiting_payment"
         print_label = "colour" if print_type == "color" else "black-and-white"
         initial_update = order_update(
             status,
-            f"Digital printing estimate: ₹{quote_paise / 100:,.2f} ({copies} sheets at ₹{price_each_paise / 100:,.2f} each)."
+            f"Digital printing estimate: ₹{quote_paise / 100:,.2f} ({file_count} file(s) × {copies} print(s) × ₹{price_each_paise / 100:,.2f} each)."
             + (f" Includes ₹{delivery_fee_paise / 100:,.2f} delivery." if delivery_fee_paise else ""),
         )
     else:
@@ -615,17 +641,32 @@ def create_order():
 
     order_id = ObjectId()
     order_tracking_id = tracking_id_for(order_id)
-    stored_name = f"{order_tracking_id}.{extension}"
-    display_name = f"{order_tracking_id}_{original_name}"
-    uploaded.save(UPLOAD_FOLDER / stored_name)
+    documents = []
+    saved_paths = []
+    for uploaded, original_name in zip(uploaded_files, original_names):
+        extension = original_name.rsplit(".", 1)[-1].lower()
+        stored_name = f"{order_tracking_id}_{uuid4().hex}.{extension}"
+        display_name = f"{order_tracking_id}_{original_name}"
+        documents.append({
+            "document_name": original_name,
+            "display_name": display_name,
+            "stored_name": stored_name,
+        })
+        saved_paths.append(UPLOAD_FOLDER / stored_name)
     order = {
         "_id": order_id,
         "tracking_id": order_tracking_id,
         "user_id": g.user["_id"],
         "customer_name": g.user["name"],
-        "document_name": original_name,
-        "display_name": display_name,
-        "stored_name": stored_name,
+        "documents": documents,
+        "file_count": len(documents),
+        "document_name": documents[0]["document_name"],
+        "display_name": (
+            documents[0]["display_name"]
+            if len(documents) == 1
+            else f"{len(documents)} documents"
+        ),
+        "stored_name": documents[0]["stored_name"],
         "copies": copies,
         "product_category": category,
         "print_type": print_type,
@@ -643,12 +684,15 @@ def create_order():
         "payment_reference": None,
     }
     try:
+        for uploaded, path in zip(uploaded_files, saved_paths):
+            uploaded.save(path)
         get_database().orders.insert_one(order)
-    except PyMongoError:
-        (UPLOAD_FOLDER / stored_name).unlink(missing_ok=True)
+    except (OSError, PyMongoError):
+        for path in saved_paths:
+            path.unlink(missing_ok=True)
         raise
     notify_admin(
-        f"New {print_label} order {order_tracking_id} from {g.user['name']}: {copies} sheets of {original_name}, size {paper_size}, {delivery_type}."
+        f"New {print_label} order {order_tracking_id} from {g.user['name']}: {copies} sheets of {len(documents)} document(s), size {paper_size}, {delivery_type}."
     )
     flash("Raju Printer will review your document and send you a quotation.", "order-sent")
     return redirect(url_for("dashboard"))
@@ -876,18 +920,25 @@ def cancel_order(order_id):
 
 
 @app.get("/orders/<order_id>/document")
+@app.get("/orders/<order_id>/documents/<int:document_index>")
 @login_required
-def download_document(order_id):
+def download_document(order_id, document_index=None):
     order = get_database().orders.find_one({"_id": ObjectId(order_id)})
     if not order:
         abort(404)
     if g.user["role"] != "admin" and order["user_id"] != g.user["_id"]:
         abort(403)
+    documents = order_documents(order)
+    if document_index is None:
+        document_index = 0
+    if document_index >= len(documents):
+        abort(404)
+    document = documents[document_index]
     return send_from_directory(
         UPLOAD_FOLDER,
-        order["stored_name"],
+        document["stored_name"],
         as_attachment=True,
-        download_name=order.get("display_name", order["document_name"]),
+        download_name=document["display_name"],
     )
 
 

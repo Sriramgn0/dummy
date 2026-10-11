@@ -35,13 +35,53 @@ document.addEventListener("DOMContentLoaded", () => {
     closeButtons[0]?.focus();
   }
 
-  const fileInput = document.querySelector("#document");
+  const fileInput = document.querySelector("#documents");
   const fileLabel = document.querySelector("[data-file-name]");
+  const fileList = document.querySelector("[data-file-list]");
+  let selectedFiles = [];
 
   if (fileInput && fileLabel) {
+    const renderSelectedFiles = () => {
+      const transfer = new DataTransfer();
+      selectedFiles.forEach((file) => transfer.items.add(file));
+      fileInput.files = transfer.files;
+      fileLabel.textContent = selectedFiles.length
+        ? `${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"} selected — add more`
+        : "Choose documents";
+      fileList.replaceChildren();
+      selectedFiles.forEach((file, index) => {
+        const item = document.createElement("li");
+        const name = document.createElement("span");
+        const remove = document.createElement("button");
+        name.textContent = file.name;
+        remove.type = "button";
+        remove.className = "remove-selected-file";
+        remove.textContent = "Delete";
+        remove.setAttribute("aria-label", `Delete ${file.name}`);
+        remove.addEventListener("click", () => {
+          selectedFiles.splice(index, 1);
+          renderSelectedFiles();
+          orderForm?.dispatchEvent(new Event("files-updated"));
+        });
+        item.append(name, remove);
+        fileList.append(item);
+      });
+      fileList.hidden = selectedFiles.length === 0;
+      fileInput.closest(".upload-zone")?.classList.toggle("has-file", selectedFiles.length > 0);
+      fileInput.required = selectedFiles.length === 0;
+    };
+
     fileInput.addEventListener("change", () => {
-      fileLabel.textContent = fileInput.files[0]?.name || "Choose a document";
-      fileInput.closest(".upload-zone")?.classList.toggle("has-file", Boolean(fileInput.files.length));
+      Array.from(fileInput.files).forEach((file) => {
+        const alreadySelected = selectedFiles.some((selected) =>
+          selected.name === file.name &&
+          selected.size === file.size &&
+          selected.lastModified === file.lastModified
+        );
+        if (!alreadySelected) selectedFiles.push(file);
+      });
+      renderSelectedFiles();
+      orderForm?.dispatchEvent(new Event("files-updated"));
     });
   }
 
@@ -100,28 +140,32 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      orderHelp.textContent = "Your total is calculated from the configured rate per sheet.";
+      orderHelp.textContent = "Estimate = files × prints per file × configured rate.";
       orderLabel.textContent = "Continue to payment";
       const sheetRate = priceData[sizeSelect.value]?.[modeSelect.value];
       const sheetCount = Number(quantity.value);
-      if (!sheetRate || !Number.isInteger(sheetCount) || sheetCount < 1) {
+      const fileCount = selectedFiles.length;
+      if (!sheetRate || !Number.isInteger(sheetCount) || sheetCount < 1 || fileCount < 1) {
         priceTotal.textContent = "Rate not set";
         priceUnit.textContent = "";
-        priceHint.textContent = "The print desk needs to configure this size and print mode.";
+        priceHint.textContent = fileCount < 1
+          ? "Select at least one file to see the estimate."
+          : "The print desk needs to configure this size and print mode.";
         submitButton.disabled = true;
         return;
       }
 
       const deliveryFee = isDelivery ? Number(priceData.delivery_fee_paise || 0) : 0;
-      const total = sheetRate * sheetCount + deliveryFee;
+      const total = sheetRate * sheetCount * fileCount + deliveryFee;
       priceTotal.textContent = `₹${(total / 100).toFixed(2)}`;
-      priceUnit.textContent = `₹${(sheetRate / 100).toFixed(2)} per sheet`;
-      priceHint.textContent = `${sheetCount} sheet${sheetCount === 1 ? "" : "s"} × ₹${(sheetRate / 100).toFixed(2)}${deliveryFee ? ` + ₹${(deliveryFee / 100).toFixed(2)} delivery` : ""}`;
+      priceUnit.textContent = `₹${(sheetRate / 100).toFixed(2)} per print`;
+      priceHint.textContent = `${fileCount} file${fileCount === 1 ? "" : "s"} × ${sheetCount} print${sheetCount === 1 ? "" : "s"} × ₹${(sheetRate / 100).toFixed(2)}${deliveryFee ? ` + ₹${(deliveryFee / 100).toFixed(2)} delivery` : ""}`;
       submitButton.disabled = false;
     };
 
     categoryInputs.forEach((input) => input.addEventListener("change", updateOrderForm));
     deliveryInputs.forEach((input) => input.addEventListener("change", updateOrderForm));
+    orderForm.addEventListener("files-updated", updateOrderForm);
     [quantity, sizeSelect, modeSelect].forEach((input) => input.addEventListener("input", updateOrderForm));
     [sizeSelect, modeSelect, cadSize].forEach((input) => input.addEventListener("change", updateOrderForm));
     updateOrderForm();

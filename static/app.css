@@ -138,7 +138,11 @@ a { color: inherit; }
 .upload-zone input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .upload-symbol { display: grid; width: 25px; height: 25px; margin-bottom: 6px; place-items: center; border: 1px solid #cdd1dc; border-radius: 50%; color: var(--blue); font-size: 16px; }
 .upload-title { max-width: 90%; overflow: hidden; color: #343732; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.upload-hint { margin-top: 2px; color: #8d8f88; font-size: 10px; }
+.upload-hint { max-width: 90%; overflow: hidden; margin-top: 2px; color: #8d8f88; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.selected-files { display: grid; gap: 5px; margin: -7px 0 0; padding: 0; list-style: none; }
+.selected-files li { display: flex; align-items: center; justify-content: space-between; gap: 10px; overflow-wrap: anywhere; border: 1px solid var(--line); padding: 7px 9px; background: #fffefa; color: #555951; font-size: 11px; }
+.remove-selected-file { flex: none; border: 0; padding: 4px 6px; background: transparent; color: #a34336; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.remove-selected-file:hover { text-decoration: underline; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 .field { display: grid; align-content: start; gap: 6px; }
 .field input, .field select { min-height: 39px; padding: 8px 10px; font-size: 12px; }
@@ -160,6 +164,8 @@ a { color: inherit; }
 .order-table th { height: 37px; color: #8a8c85; font-size: 9px; font-weight: 700; letter-spacing: .8px; }
 .order-table td { height: 65px; border-top: 1px solid #e5e4de; color: #575a54; font-size: 11px; }
 .document-link { display: flex; min-width: 180px; align-items: center; gap: 10px; text-decoration: none; }
+.order-documents { display: grid; gap: 7px; }
+.order-documents .document-link { min-width: 0; }
 .document-link > span:last-child { display: grid; gap: 4px; }
 .document-link strong { max-width: 230px; overflow: hidden; color: var(--ink); font-size: 11px; text-overflow: ellipsis; }
 .document-link small { color: #90928b; font-size: 9px; }
