@@ -3,7 +3,7 @@
 {% block content %}
 <header class="topbar">
   <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i></i><i></i><i></i><i></i></span><span>raju<span class="brand-thin">printer</span></span></a>
-  <div class="topbar-right"><a class="button button-quiet order-back-link" href="{{ url_for('dashboard') }}">Order desk <span aria-hidden="true">↗</span></a><span class="admin-tag"><span class="admin-tag-dot"></span> ADMIN</span></div>
+  <div class="topbar-right"><a class="button button-quiet order-back-link" href="{{ url_for('dashboard') }}">Order desk <span aria-hidden="true">↗</span></a><a class="breadcrumb-link" href="{{ url_for('customers') }}">CUSTOMERS</a><span class="admin-tag"><span class="admin-tag-dot"></span> ADMIN</span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet logout-button" type="submit">Log out</button></form></div>
 </header>
 <main class="workspace customer-create-workspace">
   <div class="page-heading"><div><p class="eyebrow"><a class="breadcrumb-link" href="{{ url_for('dashboard') }}">ORDER DESK</a> <span class="eyebrow-divider">/</span> CUSTOMER ACCESS</p><h1>Add a customer login.</h1><p class="muted">Create their account and collect a delivery address and WhatsApp opt-in.</p></div></div>
