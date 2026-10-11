@@ -640,6 +640,15 @@ a { color: inherit; }
 .upi-actions > .button { justify-self: start; min-height: 35px; }
 .upi-app-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 .upi-app-buttons .button { min-height: 35px; padding: 0 10px; font-size: 9px; }
+.upi-qr-option { border-top: 1px solid #d8dce5; padding-top: 9px; color: var(--blue); font-size: 10px; }
+.upi-qr-option summary { cursor: pointer; font-weight: 700; }
+.upi-qr-content { display: grid; justify-items: start; gap: 8px; padding-top: 10px; }
+.upi-qr-content img { width: min(100%, 250px); height: auto; border: 1px solid var(--line); background: white; }
+.upi-qr-content p { margin: 0; }
+.upi-qr-content form { display: grid; grid-template-columns: minmax(100px, 1fr) auto; align-items: end; gap: 7px; width: 100%; }
+.upi-qr-content form label { grid-column: 1 / -1; color: #555851; font-size: 9px; font-weight: 700; }
+.upi-qr-content form input { min-height: 35px; border: 1px solid var(--line); padding: 7px 9px; background: #fffefa; font-size: 10px; }
+.upi-qr-content form .button { min-height: 35px; padding: 0 10px; font-size: 9px; }
 .upi-actions form { display: grid; grid-template-columns: minmax(100px, 1fr) auto; align-items: end; gap: 7px; }
 .upi-actions form label { grid-column: 1 / -1; color: #555851; font-size: 9px; font-weight: 700; }
 .upi-actions form input { min-height: 35px; border: 1px solid var(--line); padding: 7px 9px; background: #fffefa; font-size: 10px; }
