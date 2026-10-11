@@ -13,7 +13,26 @@
 </head>
 <body>
   {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}<div class="flash-stack">{% for category, message in messages %}{% if category == 'order-sent' %}<div class="order-popup-backdrop" data-order-popup><section class="order-popup" role="dialog" aria-modal="true" aria-labelledby="order-popup-title" aria-describedby="order-popup-message" tabindex="-1"><button class="order-popup-close" type="button" data-popup-close aria-label="Close confirmation">×</button><span class="order-popup-mark" aria-hidden="true">✓</span><p class="eyebrow">ORDER RECEIVED</p><h2 id="order-popup-title">Your order is in.</h2><p id="order-popup-message">{{ message }}</p><button class="button button-primary" type="button" data-popup-close>Got it <span aria-hidden="true">↗</span></button></section></div>{% else %}<div class="flash flash-{{ category }}" role="status">{{ message }}</div>{% endif %}{% endfor %}</div>{% endif %}
+    {% if messages %}
+      <div class="order-popup-backdrop" data-flash-popup>
+        <section class="order-popup{% if messages[0][0] == 'error' %} order-popup-error{% endif %}" role="dialog" aria-modal="true" aria-labelledby="flash-popup-title" aria-describedby="flash-popup-message" tabindex="-1">
+          <span class="order-popup-mark" aria-hidden="true">{% if messages[0][0] == 'error' %}!{% else %}✓{% endif %}</span>
+          <p class="eyebrow">
+            {% if messages[0][0] == 'order-sent' %}ORDER RECEIVED
+            {% elif messages[0][0] == 'quote-sent' %}QUOTE SENT
+            {% else %}{{ messages[0][0]|replace('-', ' ')|upper }}{% endif %}
+          </p>
+          <h2 id="flash-popup-title">
+            {% if messages[0][0] == 'order-sent' %}Your order is in.
+            {% elif messages[0][0] == 'quote-sent' %}Quotation sent.
+            {% elif messages[0][0] == 'error' %}Please check this.
+            {% else %}Notification{% endif %}
+          </h2>
+          <ul id="flash-popup-message">{% for category, message in messages %}<li>{{ message }}</li>{% endfor %}</ul>
+          <button class="button button-primary" type="button" data-popup-close>Okay</button>
+        </section>
+      </div>
+    {% endif %}
   {% endwith %}
   {% block content %}{% endblock %}
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>

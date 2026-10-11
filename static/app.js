@@ -21,17 +21,21 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  const orderPopup = document.querySelector("[data-order-popup]");
-  if (orderPopup) {
-    const closeButtons = orderPopup.querySelectorAll("[data-popup-close]");
-    const dismissPopup = () => orderPopup.remove();
-    closeButtons.forEach((button) => button.addEventListener("click", dismissPopup));
-    orderPopup.addEventListener("click", (event) => {
-      if (event.target === orderPopup) dismissPopup();
-    });
-    document.addEventListener("keydown", (event) => {
+  const flashPopup = document.querySelector("[data-flash-popup]");
+  if (flashPopup) {
+    const closeButtons = flashPopup.querySelectorAll("[data-popup-close]");
+    const dismissPopup = () => {
+      flashPopup.remove();
+      document.removeEventListener("keydown", dismissOnEscape);
+    };
+    const dismissOnEscape = (event) => {
       if (event.key === "Escape") dismissPopup();
-    }, { once: true });
+    };
+    closeButtons.forEach((button) => button.addEventListener("click", dismissPopup));
+    flashPopup.addEventListener("click", (event) => {
+      if (event.target === flashPopup) dismissPopup();
+    });
+    document.addEventListener("keydown", dismissOnEscape);
     closeButtons[0]?.focus();
   }
 
@@ -94,7 +98,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const cadField = orderForm.querySelector("[data-cad-field]");
     const cadSize = orderForm.querySelector("#cad_size");
     const deliveryAddressField = orderForm.querySelector("[data-delivery-address]");
+    const deliveryAddressChoice = orderForm.querySelector("[data-address-choice]");
+    const newAddressField = orderForm.querySelector("[data-new-address-field]");
     const deliveryAddress = orderForm.querySelector("#delivery_address");
+    const saveAddress = orderForm.querySelector("[name='save_address']");
     const notes = orderForm.querySelector("[data-order-notes]");
     const notesLabel = orderForm.querySelector("[data-notes-label]");
     const notesOptional = notesLabel.querySelector(".optional");
@@ -109,6 +116,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const quantity = orderForm.querySelector("[data-price-qty]");
     const sizeSelect = orderForm.querySelector("[data-price-size]");
     const modeSelect = orderForm.querySelector("[data-price-mode]");
+    const sidesSelect = orderForm.querySelector("[data-price-sides]");
+    const sizeInfoTitle = orderForm.querySelector("[data-size-info-title]");
+    const sizeInfoText = orderForm.querySelector("[data-size-info-text]");
 
     const updateOrderForm = () => {
       const category = orderForm.querySelector("[name='product_category']:checked")?.value;
@@ -123,13 +133,20 @@ document.addEventListener("DOMContentLoaded", () => {
       cadField.hidden = isDigital;
       cadSize.disabled = isDigital;
       deliveryAddressField.hidden = !isDelivery;
-      deliveryAddress.disabled = !isDelivery;
-      deliveryAddress.required = isDelivery;
+      deliveryAddressChoice.disabled = !isDelivery;
+      const isNewAddress = deliveryAddressChoice.value === "__new__";
+      newAddressField.hidden = !isDelivery || !isNewAddress;
+      deliveryAddress.disabled = !isDelivery || !isNewAddress;
+      deliveryAddress.required = isDelivery && isNewAddress;
+      saveAddress.disabled = !isDelivery || !isNewAddress;
       notes.required = isCustomCad;
       notesHint.hidden = !isCustomCad;
       notesOptional.hidden = isCustomCad;
       notesLabel.firstChild.textContent = isCustomCad ? "Extra notes (required) " : "Anything we should know ";
       pricePreview.hidden = !isDigital;
+      const selectedSize = sizeSelect.selectedOptions[0];
+      sizeInfoTitle.textContent = selectedSize.textContent;
+      sizeInfoText.textContent = selectedSize.dataset.description;
 
       if (!isDigital) {
         orderHelp.textContent = isDelivery
@@ -140,12 +157,14 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      orderHelp.textContent = "Estimate = files × prints per file × configured rate.";
+      orderHelp.textContent = sidesSelect.value === "front_back"
+        ? "Front and back uses two files per sheet; any odd final file uses one side."
+        : "Estimate = files × prints per file × configured rate.";
       orderLabel.textContent = "Continue to payment";
-      const sheetRate = priceData[sizeSelect.value]?.[modeSelect.value];
-      const sheetCount = Number(quantity.value);
+      const sheetRate = priceData[sizeSelect.value]?.[modeSelect.value]?.[sidesSelect.value];
+      const copies = Number(quantity.value);
       const fileCount = selectedFiles.length;
-      if (!sheetRate || !Number.isInteger(sheetCount) || sheetCount < 1 || fileCount < 1) {
+      if (!sheetRate || !Number.isInteger(copies) || copies < 1 || fileCount < 1) {
         priceTotal.textContent = "Rate not set";
         priceUnit.textContent = "";
         priceHint.textContent = fileCount < 1
@@ -155,19 +174,23 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
+      const sheetsPerCopy = sidesSelect.value === "front_back"
+        ? Math.ceil(fileCount / 2)
+        : fileCount;
       const deliveryFee = isDelivery ? Number(priceData.delivery_fee_paise || 0) : 0;
-      const total = sheetRate * sheetCount * fileCount + deliveryFee;
+      const total = sheetRate * copies * sheetsPerCopy + deliveryFee;
       priceTotal.textContent = `₹${(total / 100).toFixed(2)}`;
-      priceUnit.textContent = `₹${(sheetRate / 100).toFixed(2)} per print`;
-      priceHint.textContent = `${fileCount} file${fileCount === 1 ? "" : "s"} × ${sheetCount} print${sheetCount === 1 ? "" : "s"} × ₹${(sheetRate / 100).toFixed(2)}${deliveryFee ? ` + ₹${(deliveryFee / 100).toFixed(2)} delivery` : ""}`;
+      priceUnit.textContent = `₹${(sheetRate / 100).toFixed(2)} per sheet`;
+      priceHint.textContent = `${sheetsPerCopy} sheet${sheetsPerCopy === 1 ? "" : "s"} × ${copies} cop${copies === 1 ? "y" : "ies"}${sidesSelect.value === "front_back" ? ` (${fileCount} file${fileCount === 1 ? "" : "s"}, front and back)` : ` (${fileCount} file${fileCount === 1 ? "" : "s"})`} × ₹${(sheetRate / 100).toFixed(2)}${deliveryFee ? ` + ₹${(deliveryFee / 100).toFixed(2)} delivery` : ""}`;
       submitButton.disabled = false;
     };
 
     categoryInputs.forEach((input) => input.addEventListener("change", updateOrderForm));
     deliveryInputs.forEach((input) => input.addEventListener("change", updateOrderForm));
+    deliveryAddressChoice.addEventListener("change", updateOrderForm);
     orderForm.addEventListener("files-updated", updateOrderForm);
-    [quantity, sizeSelect, modeSelect].forEach((input) => input.addEventListener("input", updateOrderForm));
-    [sizeSelect, modeSelect, cadSize].forEach((input) => input.addEventListener("change", updateOrderForm));
+    [quantity, sizeSelect, modeSelect, sidesSelect].forEach((input) => input.addEventListener("input", updateOrderForm));
+    [sizeSelect, modeSelect, sidesSelect, cadSize].forEach((input) => input.addEventListener("change", updateOrderForm));
     updateOrderForm();
   }
 });

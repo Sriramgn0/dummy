@@ -1,4 +1,5 @@
 import hmac
+import hashlib
 import os
 import re
 import secrets
@@ -11,6 +12,7 @@ import certifi
 import requests
 from bson import ObjectId
 from bson.errors import InvalidId
+from dotenv import load_dotenv
 from flask import (
     Flask,
     abort,
@@ -30,12 +32,73 @@ from werkzeug.utils import secure_filename
 
 
 ROOT = Path(__file__).resolve().parent
-UPLOAD_FOLDER = ROOT / "uploads"
-ALLOWED_EXTENSIONS = {"pdf", "doc", "docx", "jpg", "jpeg", "png"}
-MAX_UPLOAD_SIZE = 20 * 1024 * 1024
-DIGITAL_SIZES = ("A4", "A3", "A5", "Letter")
-CAD_SIZES = ("A0", "A1", "A2", "A4", "Custom")
+load_dotenv(ROOT / ".env")
+
+UPLOAD_FOLDER = Path(os.environ.get("UPLOAD_FOLDER", "uploads"))
+if not UPLOAD_FOLDER.is_absolute():
+    UPLOAD_FOLDER = ROOT / UPLOAD_FOLDER
+ALLOWED_EXTENSIONS = {
+    extension.strip().lower()
+    for extension in os.environ.get(
+        "ALLOWED_EXTENSIONS", "pdf,doc,docx,jpg,jpeg,png"
+    ).split(",")
+    if extension.strip()
+}
+try:
+    MAX_UPLOAD_SIZE = int(os.environ.get("MAX_UPLOAD_SIZE_MB", "20")) * 1024 * 1024
+except ValueError as error:
+    raise RuntimeError("MAX_UPLOAD_SIZE_MB must be a positive integer.") from error
+if MAX_UPLOAD_SIZE < 1 or not ALLOWED_EXTENSIONS:
+    raise RuntimeError(
+        "MAX_UPLOAD_SIZE_MB must be positive and ALLOWED_EXTENSIONS cannot be empty."
+    )
+DIGITAL_SIZES = (
+    "A4",
+    "A3",
+    "A5",
+    "Letter",
+    "4 x 6 inches (10.2 x 15.2 cm)",
+    "5 x 7 inches (12.7 x 17.8 cm)",
+    "8 x 10 inches (20.3 x 25.4 cm)",
+    "8.5 x 11 inches (21.6 x 27.9 cm)",
+    "11 x 14 inches (27.9 x 35.6 cm)",
+    "12 x 18 inches (30.5 x 45.7 cm)",
+    "18 x 24 inches (45.7 x 61.0 cm)",
+    "24 x 36 inches (61.0 x 91.4 cm)",
+)
+
+DIGITAL_SIZE_DESCRIPTIONS = {
+    "A4": "Standard A4 paper size.",
+    "A3": "Standard A3 paper size.",
+    "A5": "Standard A5 paper size.",
+    "Letter": "Standard US Letter paper size.",
+    "4 x 6 inches (10.2 x 15.2 cm)": (
+        "3:2 ratio; best for postcards, small frames, and standard photos. "
+        "Recommended: 1200 x 1800 px at 300 DPI."
+    ),
+    "5 x 7 inches (12.7 x 17.8 cm)": (
+        "Great for portrait photography and smaller displays. "
+        "Recommended: 1500 x 2100 px at 300 DPI."
+    ),
+    "8 x 10 inches (20.3 x 25.4 cm)": (
+        "4:5 ratio; classic size for framed home artwork."
+    ),
+    "8.5 x 11 inches (21.6 x 27.9 cm)": (
+        "Standard US Letter / small poster size."
+    ),
+    "11 x 14 inches (27.9 x 35.6 cm)": (
+        "Popular standalone gallery and gift print size."
+    ),
+    "12 x 18 inches (30.5 x 45.7 cm)": "2:3 ratio; medium poster print.",
+    "18 x 24 inches (45.7 x 61.0 cm)": "3:4 ratio; large statement wall art.",
+    "24 x 36 inches (61.0 x 91.4 cm)": (
+        "2:3 ratio; extra-large poster size. "
+        "Recommended: 7200 x 10800 px at 300 DPI."
+    ),
+}
+CAD_SIZES = ("A0", "A1", "A2", "A3", "A4", "Custom")
 PRINT_TYPES = ("black_white", "color")
+PRINT_SIDES = ("front_only", "front_back")
 ORDER_STATUS_LABELS = {
     "pending_quote": "Awaiting quote",
     "awaiting_payment": "Payment due",
@@ -44,42 +107,75 @@ ORDER_STATUS_LABELS = {
     "paid": "Paid",
     "confirmed": "Confirmed",
     "printing": "Printing",
+    "work_in_progress": "Work in progress",
     "ready_for_pickup": "Ready for pickup",
     "out_for_delivery": "Out for delivery",
     "delivered": "Delivered",
     "cancelled": "Cancelled",
 }
 FULFILLMENT_RANK = {
+    "awaiting_payment": -2,
+    "payment_submitted": -1,
     "paid": 0,
     "confirmed": 1,
     "printing": 2,
+    "work_in_progress": 2,
     "ready_for_pickup": 3,
     "out_for_delivery": 4,
     "delivered": 5,
 }
-MONGO_URI="mongodb+srv://sriramgn0_db_user:GnUXSJqYjFfbhufK@cluster0.udbbaok.mongodb.net/raju_printer?appName=Cluster0"
+HTTPS_CERTIFICATE = os.environ.get("HTTPS_CERTIFICATE", "")
+HTTPS_PRIVATE_KEY = os.environ.get("HTTPS_PRIVATE_KEY", "")
+if bool(HTTPS_CERTIFICATE) != bool(HTTPS_PRIVATE_KEY):
+    raise RuntimeError("Set both HTTPS_CERTIFICATE and HTTPS_PRIVATE_KEY to enable HTTPS.")
+try:
+    SESSION_IDLE_TIMEOUT_MINUTES = int(os.environ.get("SESSION_IDLE_TIMEOUT_MINUTES", "30"))
+except ValueError as error:
+    raise RuntimeError("SESSION_IDLE_TIMEOUT_MINUTES must be a positive integer.") from error
+if SESSION_IDLE_TIMEOUT_MINUTES < 1:
+    raise RuntimeError("SESSION_IDLE_TIMEOUT_MINUTES must be at least 1.")
+
+RAJU_ENV = os.environ.get("RAJU_ENV", "development").lower()
+
 app = Flask(__name__)
 app.config.update(
-    SECRET_KEY=os.environ.get("FLASK_SECRET_KEY", "local-development-key-change-me"),
+    SECRET_KEY=os.environ.get("FLASK_SECRET_KEY", ""),
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES),
+    MONGO_URI=os.environ.get("MONGO_URI", "").strip(),
     MONGO_DATABASE=os.environ.get("MONGO_DATABASE", "raju_printer"),
     UPI_ID=os.environ.get("RAJU_UPI_ID", ""),
     UPI_PAYEE_NAME=os.environ.get("RAJU_UPI_NAME", "Raju Printer"),
+    RAJU_ENV=RAJU_ENV,
+    FLASK_DEBUG=os.environ.get("FLASK_DEBUG", "false").lower() == "true",
+    RAJU_DEMO_MODE=os.environ.get("RAJU_DEMO_MODE", "false").lower() == "true",
+    DEMO_ADMIN_USERNAME=os.environ.get("DEMO_ADMIN_USERNAME", "admin"),
+    DEMO_ADMIN_PASSWORD=os.environ.get("DEMO_ADMIN_PASSWORD", ""),
+    DEMO_CUSTOMER_USERNAME=os.environ.get("DEMO_CUSTOMER_USERNAME", "customer"),
+    DEMO_CUSTOMER_PASSWORD=os.environ.get("DEMO_CUSTOMER_PASSWORD", ""),
+    BOOTSTRAP_ADMIN_USERNAME=os.environ.get("BOOTSTRAP_ADMIN_USERNAME", "admin"),
+    BOOTSTRAP_ADMIN_PASSWORD=os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", ""),
+    DEMO_CUSTOMER_WHATSAPP=os.environ.get("DEMO_CUSTOMER_WHATSAPP", ""),
+    MAX_CONTENT_LENGTH=MAX_UPLOAD_SIZE,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=(
+        RAJU_ENV == "production"
+        or bool(HTTPS_CERTIFICATE and HTTPS_PRIVATE_KEY)
+    ),
     WHATSAPP_ACCESS_TOKEN=os.environ.get("WHATSAPP_ACCESS_TOKEN", ""),
     WHATSAPP_PHONE_NUMBER_ID=os.environ.get("WHATSAPP_PHONE_NUMBER_ID", ""),
     WHATSAPP_ADMIN_NUMBER=os.environ.get("WHATSAPP_ADMIN_NUMBER", ""),
     WHATSAPP_TEMPLATE_NAME=os.environ.get("WHATSAPP_TEMPLATE_NAME", "raju_printer_update"),
     WHATSAPP_TEMPLATE_LANGUAGE=os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE", "en_US"),
     WHATSAPP_API_VERSION=os.environ.get("WHATSAPP_API_VERSION", "v23.0"),
-    MAX_CONTENT_LENGTH=MAX_UPLOAD_SIZE,
-    SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("RAJU_ENV", "").lower() == "production",
 )
+if not app.config["SECRET_KEY"]:
+    raise RuntimeError("FLASK_SECRET_KEY must be set in the environment or .env file.")
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 
 
 def get_database():
     if "database" not in app.extensions:
-        mongo_uri = "mongodb+srv://sriramgn0_db_user:GnUXSJqYjFfbhufK@cluster0.udbbaok.mongodb.net/raju_printer?appName=Cluster0"
+        mongo_uri = app.config["MONGO_URI"]
         if not mongo_uri:
             raise RuntimeError(
                 "MONGO_URI is not configured. Set it to the connection string "
@@ -93,11 +189,37 @@ def get_database():
             database.users.create_index("username", unique=True)
             database.orders.create_index([("user_id", 1), ("created_at", DESCENDING)])
             database.orders.create_index("status")
+            legacy_price_index_keys = [
+                ("service", 1),
+                ("size", 1),
+                ("print_type", 1),
+            ]
+            for index_name, index in database.digital_prices.index_information().items():
+                if (
+                    index_name != "_id_"
+                    and index.get("unique")
+                    and index.get("key") == legacy_price_index_keys
+                ):
+                    database.digital_prices.drop_index(index_name)
+            database.digital_prices.update_many(
+                {
+                    "service": "digital_printing",
+                    "print_sides": {"$exists": False},
+                },
+                {"$set": {"print_sides": "front_only"}},
+            )
             database.digital_prices.create_index(
-                [("service", 1), ("size", 1), ("print_type", 1)], unique=True
+                [
+                    ("service", 1),
+                    ("size", 1),
+                    ("print_type", 1),
+                    ("print_sides", 1),
+                ],
+                unique=True,
             )
             database.orders.create_index("tracking_id", unique=True, sparse=True)
-            seed_initial_accounts(database)
+            database.login_sessions.create_index([("user_id", 1), ("created_at", DESCENDING)])
+            database.login_sessions.create_index("expires_at", expireAfterSeconds=0)
         except PyMongoError as error:
             if client is not None:
                 client.close()
@@ -113,15 +235,20 @@ def get_database():
 
 
 def seed_initial_accounts(database):
-    demo_mode = os.environ.get("RAJU_DEMO_MODE", "true").lower() == "true"
-    admin_password = os.environ.get("DEMO_ADMIN_PASSWORD", "Admin123!") if demo_mode else os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
+    demo_mode = app.config["RAJU_DEMO_MODE"]
+    admin_password = (
+        app.config["DEMO_ADMIN_PASSWORD"]
+        if demo_mode
+        else app.config["BOOTSTRAP_ADMIN_PASSWORD"]
+    )
     accounts = []
     if admin_password:
         accounts.append(
             {
-                "username": os.environ.get(
-                    "BOOTSTRAP_ADMIN_USERNAME",
-                    os.environ.get("DEMO_ADMIN_USERNAME", "admin") if demo_mode else "admin",
+                "username": (
+                    app.config["DEMO_ADMIN_USERNAME"]
+                    if demo_mode
+                    else app.config["BOOTSTRAP_ADMIN_USERNAME"]
                 ).lower(),
                 "name": "Raju Printer Admin",
                 "password": admin_password,
@@ -137,7 +264,7 @@ def seed_initial_accounts(database):
                     "name": account["name"],
                     "password_hash": generate_password_hash(account["password"]),
                     "role": account["role"],
-                    "whatsapp_number": os.environ.get("DEMO_CUSTOMER_WHATSAPP", "")
+                    "whatsapp_number": app.config["DEMO_CUSTOMER_WHATSAPP"]
                     if account["role"] == "customer"
                     else "",
                     "created_at": datetime.now(timezone.utc),
@@ -156,7 +283,16 @@ def send_whatsapp(recipient, name, message):
     recipient = normalize_whatsapp_number(recipient)
     access_token = app.config["WHATSAPP_ACCESS_TOKEN"]
     phone_number_id = app.config["WHATSAPP_PHONE_NUMBER_ID"]
-    if not recipient or not access_token or not phone_number_id:
+    if not recipient:
+        app.logger.warning(
+            "WhatsApp notification skipped: recipient number is missing or invalid."
+        )
+        return False
+    if not access_token or not phone_number_id:
+        app.logger.warning(
+            "WhatsApp notification skipped: configure WHATSAPP_ACCESS_TOKEN and "
+            "WHATSAPP_PHONE_NUMBER_ID."
+        )
         return False
     payload = {
         "messaging_product": "whatsapp",
@@ -240,12 +376,71 @@ def inject_user():
 @app.before_request
 def load_user():
     user_id = session.get("user_id")
+    login_session_id = session.get("login_session_id")
     g.user = None
-    if user_id:
-        try:
-            g.user = get_database().users.find_one({"_id": ObjectId(user_id)})
-        except (PyMongoError, ValueError):
-            session.clear()
+    if not user_id:
+        return
+    if not login_session_id:
+        session.clear()
+        return
+    try:
+        user_object_id = ObjectId(user_id)
+    except (InvalidId, TypeError):
+        session.clear()
+        return
+
+    now = datetime.now(timezone.utc)
+    database = get_database()
+    session_filter = {
+        "user_id": user_object_id,
+        "session_hash": hashlib.sha256(login_session_id.encode()).hexdigest(),
+        "revoked_at": None,
+        "expires_at": {"$gt": now},
+    }
+    login_session = database.login_sessions.find_one(session_filter)
+    if not login_session:
+        session.clear()
+        return
+
+    expires_at = now + app.config["PERMANENT_SESSION_LIFETIME"]
+    refreshed = database.login_sessions.update_one(
+        {**session_filter, "_id": login_session["_id"]},
+        {"$set": {"last_seen_at": now, "expires_at": expires_at}},
+    )
+    if not refreshed.matched_count:
+        session.clear()
+        return
+
+    session.permanent = True
+    g.user = database.users.find_one({"_id": user_object_id})
+    if not g.user:
+        database.login_sessions.update_one(
+            {"_id": login_session["_id"], "revoked_at": None},
+            {"$set": {"revoked_at": now}},
+        )
+        session.clear()
+
+
+def start_login_session(user_id):
+    login_session_id = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    expires_at = now + app.config["PERMANENT_SESSION_LIFETIME"]
+    get_database().login_sessions.insert_one(
+        {
+            "user_id": user_id,
+            "session_hash": hashlib.sha256(login_session_id.encode()).hexdigest(),
+            "user_agent": request.user_agent.string[:300],
+            "created_at": now,
+            "last_seen_at": now,
+            "expires_at": expires_at,
+            "revoked_at": None,
+        }
+    )
+    session.clear()
+    session.permanent = True
+    session["user_id"] = str(user_id)
+    session["login_session_id"] = login_session_id
+    session["csrf_token"] = secrets.token_urlsafe(32)
 
 
 def login_required(view):
@@ -256,6 +451,10 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+def landing_endpoint(user):
+    return "new_order" if user["role"] == "customer" else "dashboard"
 
 
 def admin_required(view):
@@ -273,14 +472,29 @@ def money(paise):
     return f"{(paise or 0) / 100:,.2f}"
 
 
+def customer_addresses(user):
+    addresses = list(user.get("addresses", []))
+    legacy_address = user.get("address", "").strip()
+    if legacy_address and legacy_address not in addresses:
+        addresses.insert(0, legacy_address)
+    return addresses
+
+
 def digital_price_map(database):
     prices = {
-        size: {print_type: None for print_type in PRINT_TYPES}
+        size: {
+            print_type: {print_sides: None for print_sides in PRINT_SIDES}
+            for print_type in PRINT_TYPES
+        }
         for size in DIGITAL_SIZES
     }
     for rate in database.digital_prices.find({"service": "digital_printing"}):
         if rate.get("size") in prices and rate.get("print_type") in PRINT_TYPES:
-            prices[rate["size"]][rate["print_type"]] = rate["price_paise"]
+            print_sides = rate.get("print_sides", "front_only")
+            if print_sides in PRINT_SIDES:
+                prices[rate["size"]][rate["print_type"]][print_sides] = rate[
+                    "price_paise"
+                ]
     delivery = database.digital_prices.find_one(
         {"service": "delivery_fee", "size": "flat", "print_type": "all"}
     )
@@ -325,39 +539,36 @@ def upload_too_large(_error):
 @app.route("/", methods=["GET"])
 def home():
     if g.user:
-        return redirect(url_for("dashboard"))
+        return redirect(url_for(landing_endpoint(g.user)))
     return render_template("home.html")
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if g.user:
-        return redirect(url_for("dashboard"))
+        return redirect(url_for(landing_endpoint(g.user)))
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         password = request.form.get("password", "")
         user = get_database().users.find_one({"username": username})
         if user and check_password_hash(user["password_hash"], password):
-            session.clear()
-            session["user_id"] = str(user["_id"])
-            session["csrf_token"] = secrets.token_urlsafe(32)
-            return redirect(url_for("dashboard"))
+            start_login_session(user["_id"])
+            return redirect(url_for(landing_endpoint(user)))
         flash("That username and password do not match.", "error")
-    demo_mode = os.environ.get("RAJU_DEMO_MODE", "true").lower() == "true"
     return render_template(
         "login.html",
-        demo_mode=demo_mode,
-        demo_admin_username=os.environ.get("DEMO_ADMIN_USERNAME", "admin"),
-        demo_admin_password=os.environ.get("DEMO_ADMIN_PASSWORD", "Admin123!"),
-        demo_customer_username=os.environ.get("DEMO_CUSTOMER_USERNAME", "customer"),
-        demo_customer_password=os.environ.get("DEMO_CUSTOMER_PASSWORD", "Print123!"),
+        demo_mode=app.config["RAJU_DEMO_MODE"],
+        demo_admin_username=app.config["DEMO_ADMIN_USERNAME"],
+        demo_admin_password=app.config["DEMO_ADMIN_PASSWORD"],
+        demo_customer_username=app.config["DEMO_CUSTOMER_USERNAME"],
+        demo_customer_password=app.config["DEMO_CUSTOMER_PASSWORD"],
     )
 
 
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
     if g.user:
-        return redirect(url_for("dashboard"))
+        return redirect(url_for(landing_endpoint(g.user)))
     form_data = {
         "name": "",
         "username": "",
@@ -409,6 +620,7 @@ def signup():
                         {
                             "name": name,
                             "address": address,
+                            "addresses": [address],
                             "username": username,
                             "password_hash": generate_password_hash(password),
                             "role": "customer",
@@ -425,18 +637,61 @@ def signup():
                     else:
                         raise
                 else:
-                    session.clear()
-                    session["user_id"] = str(result.inserted_id)
-                    session["csrf_token"] = secrets.token_urlsafe(32)
-                    return redirect(url_for("dashboard"))
+                    start_login_session(result.inserted_id)
+                    return redirect(url_for("new_order"))
     return render_template("signup.html", form_data=form_data, form_error=form_error), response_status
 
 
 @app.post("/logout")
 @login_required
 def logout():
+    database = get_database()
+    login_session_id = session.get("login_session_id")
+    if login_session_id:
+        database.login_sessions.update_one(
+            {
+                "user_id": g.user["_id"],
+                "session_hash": hashlib.sha256(login_session_id.encode()).hexdigest(),
+                "revoked_at": None,
+            },
+            {"$set": {"revoked_at": datetime.now(timezone.utc)}},
+        )
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.post("/account/addresses")
+@login_required
+def add_account_address():
+    if g.user["role"] != "customer":
+        abort(403)
+    address = request.form.get("address", "").strip()
+    if not address or len(address) > 500:
+        flash("Enter an address of up to 500 characters.", "error")
+        return redirect(url_for("account_addresses"))
+    database = get_database()
+    update = {"$addToSet": {"addresses": address}}
+    if not g.user.get("address"):
+        update["$set"] = {"address": address}
+    result = database.users.update_one(
+        {"_id": g.user["_id"], "role": "customer"},
+        update,
+    )
+    if not result.matched_count:
+        abort(404)
+    flash("Address saved to your account.", "success")
+    return redirect(url_for("account_addresses"))
+
+
+@app.get("/account/addresses")
+@login_required
+def account_addresses():
+    if g.user["role"] != "customer":
+        abort(403)
+    return render_template(
+        "customer_addresses.html",
+        addresses=customer_addresses(g.user),
+    )
 
 
 @app.route("/dashboard", methods=["GET"])
@@ -451,6 +706,7 @@ def dashboard():
             "paid",
             "confirmed",
             "printing",
+            "work_in_progress",
             "ready_for_pickup",
             "out_for_delivery",
         ]
@@ -465,7 +721,7 @@ def dashboard():
                 {"status": {"$in": ["awaiting_payment", "payment_submitted"]}}
             ),
             "paid": database.orders.count_documents(
-                {"status": {"$in": ["paid", "confirmed", "printing", "ready_for_pickup", "out_for_delivery"]}}
+                {"status": {"$in": ["paid", "confirmed", "printing", "work_in_progress", "ready_for_pickup", "out_for_delivery"]}}
             ),
         }
         return render_template(
@@ -475,9 +731,27 @@ def dashboard():
             digital_prices=digital_price_map(database),
             digital_sizes=DIGITAL_SIZES,
             print_types=PRINT_TYPES,
+            print_side_options=PRINT_SIDES,
         )
     orders = list(
-        database.orders.find({"user_id": g.user["_id"]}).sort("created_at", DESCENDING)
+        database.orders.find(
+            {
+                "user_id": g.user["_id"],
+                "status": {
+                    "$in": [
+                        "pending_quote",
+                        "awaiting_payment",
+                        "payment_submitted",
+                        "paid",
+                        "confirmed",
+                        "printing",
+                        "work_in_progress",
+                        "ready_for_pickup",
+                        "out_for_delivery",
+                    ]
+                },
+            }
+        ).sort("created_at", DESCENDING)
     )
     return render_template(
         "customer.html",
@@ -485,6 +759,24 @@ def dashboard():
         upi_id=app.config["UPI_ID"],
         upi_payee_name=app.config["UPI_PAYEE_NAME"],
     )
+
+
+@app.get("/orders/history")
+@login_required
+def order_history():
+    if g.user["role"] != "customer":
+        abort(403)
+    orders = list(
+        get_database()
+        .orders.find(
+            {
+                "user_id": g.user["_id"],
+                "status": {"$in": ["delivered", "cancelled"]},
+            }
+        )
+        .sort("created_at", DESCENDING)
+    )
+    return render_template("order_history.html", orders=orders)
 
 
 @app.get("/admin/orders/completed")
@@ -528,6 +820,7 @@ def digital_prices():
         digital_prices=digital_price_map(get_database()),
         digital_sizes=DIGITAL_SIZES,
         print_types=PRINT_TYPES,
+        print_side_options=PRINT_SIDES,
     )
 
 
@@ -539,7 +832,10 @@ def new_order():
     return render_template(
         "order_new.html",
         digital_prices=digital_price_map(get_database()),
-        customer_address=g.user.get("address", ""),
+        digital_sizes=DIGITAL_SIZES,
+        digital_size_descriptions=DIGITAL_SIZE_DESCRIPTIONS,
+        print_side_options=PRINT_SIDES,
+        customer_addresses=customer_addresses(g.user),
     )
 
 
@@ -582,9 +878,19 @@ def create_order():
         return redirect(url_for("new_order"))
     notes = request.form.get("notes", "").strip()[:500]
     if delivery_type == "delivery":
-        delivery_address = request.form.get("delivery_address", "").strip()[:500]
+        address_choice = request.form.get("delivery_address_choice", "")
+        saved_addresses = customer_addresses(g.user)
+        if address_choice == "__new__":
+            delivery_address = request.form.get("delivery_address", "").strip()
+        elif address_choice in saved_addresses:
+            delivery_address = address_choice
+        else:
+            delivery_address = ""
         if not delivery_address:
-            flash("Enter the address for this delivery.", "error")
+            flash("Choose a saved address or enter a new delivery address.", "error")
+            return redirect(url_for("new_order"))
+        if len(delivery_address) > 500:
+            flash("Delivery addresses must be 500 characters or fewer.", "error")
             return redirect(url_for("new_order"))
     else:
         delivery_address = ""
@@ -596,14 +902,20 @@ def create_order():
     if category == "digital_printing":
         paper_size = request.form.get("paper_size", "")
         print_type = request.form.get("print_type", "")
-        if paper_size not in DIGITAL_SIZES or print_type not in PRINT_TYPES:
-            flash("Choose a valid digital print size and print mode.", "error")
+        print_sides = request.form.get("print_sides", "front_only")
+        if (
+            paper_size not in DIGITAL_SIZES
+            or print_type not in PRINT_TYPES
+            or print_sides not in PRINT_SIDES
+        ):
+            flash("Choose a valid digital print size, mode, and side option.", "error")
             return redirect(url_for("new_order"))
         rate = database.digital_prices.find_one(
             {
                 "service": "digital_printing",
                 "size": paper_size,
                 "print_type": print_type,
+                "print_sides": print_sides,
             }
         )
         if not rate or rate.get("price_paise", 0) <= 0:
@@ -611,12 +923,20 @@ def create_order():
             return redirect(url_for("new_order"))
         price_each_paise = rate["price_paise"]
         file_count = len(uploaded_files)
-        quote_paise = price_each_paise * copies * file_count + delivery_fee_paise
+        sheet_count = (
+            (file_count + 1) // 2 if print_sides == "front_back" else file_count
+        )
+        quote_paise = price_each_paise * copies * sheet_count + delivery_fee_paise
         status = "awaiting_payment"
         print_label = "colour" if print_type == "color" else "black-and-white"
         initial_update = order_update(
             status,
-            f"Digital printing estimate: ₹{quote_paise / 100:,.2f} ({file_count} file(s) × {copies} print(s) × ₹{price_each_paise / 100:,.2f} each)."
+            f"Digital printing estimate: ₹{quote_paise / 100:,.2f} "
+            f"({sheet_count} sheet{'s' if sheet_count != 1 else ''} per copy × "
+            f"{copies} cop{'ies' if copies != 1 else 'y'} × "
+            f"₹{price_each_paise / 100:,.2f} per sheet; {file_count} "
+            f"file{'s' if file_count != 1 else ''}"
+            f"{' printed front and back' if print_sides == 'front_back' else ''})."
             + (f" Includes ₹{delivery_fee_paise / 100:,.2f} delivery." if delivery_fee_paise else ""),
         )
     else:
@@ -628,7 +948,9 @@ def create_order():
             flash("Add the required extra notes for a custom CAD size.", "error")
             return redirect(url_for("new_order"))
         print_type = "cad"
+        print_sides = None
         price_each_paise = None
+        sheet_count = None
         quote_paise = None
         status = "pending_quote"
         print_label = "CAD"
@@ -670,6 +992,8 @@ def create_order():
         "copies": copies,
         "product_category": category,
         "print_type": print_type,
+        "print_sides": print_sides,
+        "sheet_count": sheet_count,
         "paper_size": paper_size,
         "price_each_paise": price_each_paise,
         "delivery_type": delivery_type,
@@ -691,8 +1015,23 @@ def create_order():
         for path in saved_paths:
             path.unlink(missing_ok=True)
         raise
+    if (
+        delivery_type == "delivery"
+        and request.form.get("save_address") == "yes"
+        and request.form.get("delivery_address_choice") == "__new__"
+    ):
+        address_update = {"$addToSet": {"addresses": delivery_address}}
+        if not g.user.get("address"):
+            address_update["$set"] = {"address": delivery_address}
+        database.users.update_one(
+            {"_id": g.user["_id"], "role": "customer"},
+            address_update,
+        )
     notify_admin(
-        f"New {print_label} order {order_tracking_id} from {g.user['name']}: {copies} sheets of {len(documents)} document(s), size {paper_size}, {delivery_type}."
+        f"New {print_label} order {order_tracking_id} from {g.user['name']}: "
+        f"{copies} copies of {len(documents)} document(s), size {paper_size}, "
+        f"{'front and back, ' if category == 'digital_printing' and print_sides == 'front_back' else ''}"
+        f"{delivery_type}."
     )
     flash("Raju Printer will review your document and send you a quotation.", "order-sent")
     return redirect(url_for("dashboard"))
@@ -740,7 +1079,7 @@ def update_quote(order_id):
         order["user_id"],
         f"Your print order {order.get('tracking_id', order['_id'])} has a quotation of ₹{quote_paise / 100:,.2f}. Sign in to pay by UPI.",
     )
-    flash("Quotation updated. The customer can now pay by UPI.", "success")
+    flash("The customer can now pay by UPI.", "quote-sent")
     return redirect(url_for("dashboard"))
 
 
@@ -760,24 +1099,30 @@ def update_digital_prices():
             return redirect(url_for("digital_prices"))
     for size in DIGITAL_SIZES:
         for print_type in PRINT_TYPES:
-            field_name = f"rate_{size}_{print_type}"
-            raw_rate = request.form.get(field_name, "").strip()
-            price_paise = None
-            if raw_rate:
-                try:
-                    amount = Decimal(raw_rate).quantize(Decimal("0.01"))
-                    price_paise = int(amount * 100)
-                except (InvalidOperation, ValueError):
-                    price_paise = 0
-                if price_paise <= 0:
-                    flash("Enter a valid per-sheet price greater than zero, or leave it blank to remove a rate.", "error")
-                    return redirect(url_for("digital_prices"))
-            updates.append((size, print_type, price_paise))
+            for print_sides in PRINT_SIDES:
+                field_name = f"rate_{size}_{print_type}_{print_sides}"
+                raw_rate = request.form.get(field_name, "").strip()
+                price_paise = None
+                if raw_rate:
+                    try:
+                        amount = Decimal(raw_rate).quantize(Decimal("0.01"))
+                        price_paise = int(amount * 100)
+                    except (InvalidOperation, ValueError):
+                        price_paise = 0
+                    if price_paise <= 0:
+                        flash("Enter a valid per-sheet price greater than zero, or leave it blank to remove a rate.", "error")
+                        return redirect(url_for("digital_prices"))
+                updates.append((size, print_type, print_sides, price_paise))
 
     database = get_database()
     timestamp = datetime.now(timezone.utc)
-    for size, print_type, price_paise in updates:
-        query = {"service": "digital_printing", "size": size, "print_type": print_type}
+    for size, print_type, print_sides, price_paise in updates:
+        query = {
+            "service": "digital_printing",
+            "size": size,
+            "print_type": print_type,
+            "print_sides": print_sides,
+        }
         if price_paise is None:
             database.digital_prices.delete_one(query)
         else:
@@ -828,6 +1173,7 @@ def create_customer():
                 "name": name[:100],
                 "username": username[:60],
                 "address": address[:500],
+                "addresses": [address[:500]],
                 "password_hash": generate_password_hash(password),
                 "role": "customer",
                 "whatsapp_number": whatsapp_number,
@@ -843,6 +1189,48 @@ def create_customer():
         raise
     flash(f"Login created for {name}.", "success")
     return redirect(url_for("new_customer"))
+
+
+@app.get("/admin/customers")
+@admin_required
+def customers():
+    customer_list = list(
+        get_database()
+        .users.find({"role": "customer"}, {"password_hash": 0})
+        .sort("name", 1)
+        .limit(500)
+    )
+    return render_template("customers.html", customers=customer_list)
+
+
+@app.post("/admin/customers/<customer_id>/password")
+@admin_required
+def update_customer_password(customer_id):
+    try:
+        user_id = ObjectId(customer_id)
+    except (InvalidId, TypeError):
+        abort(404)
+    password = request.form.get("password", "")
+    password_confirm = request.form.get("password_confirm", "")
+    if len(password) < 8:
+        flash("Customer passwords must be at least 8 characters.", "error")
+        return redirect(url_for("customers"))
+    if password != password_confirm:
+        flash("The passwords do not match.", "error")
+        return redirect(url_for("customers"))
+    database = get_database()
+    result = database.users.update_one(
+        {"_id": user_id, "role": "customer"},
+        {"$set": {"password_hash": generate_password_hash(password)}},
+    )
+    if not result.matched_count:
+        abort(404)
+    database.login_sessions.update_many(
+        {"user_id": user_id, "revoked_at": None},
+        {"$set": {"revoked_at": datetime.now(timezone.utc)}},
+    )
+    flash("Customer password updated. Their active sessions have been signed out.", "success")
+    return redirect(url_for("customers"))
 
 
 @app.get("/admin/customers/new")
@@ -861,20 +1249,71 @@ def add_order_update(order_id):
     current_status = order["status"]
     next_status = request.form.get("status", current_status)
     note = request.form.get("note", "").strip()[:500]
-    if current_status not in FULFILLMENT_RANK or next_status not in FULFILLMENT_RANK:
+    if current_status == "pending_quote" or current_status not in FULFILLMENT_RANK:
         flash("Fulfillment updates are available after payment.", "error")
+        return redirect(url_for("dashboard"))
+    if next_status not in FULFILLMENT_RANK:
+        flash("Choose a valid order status.", "error")
+        return redirect(url_for("dashboard"))
+    if current_status in {"awaiting_payment", "payment_submitted"} and next_status not in {
+        current_status,
+        "paid",
+    }:
+        flash("Confirm payment before moving the order into production.", "error")
         return redirect(url_for("dashboard"))
     if FULFILLMENT_RANK[next_status] < FULFILLMENT_RANK[current_status]:
         flash("Order status cannot move backwards.", "error")
         return redirect(url_for("dashboard"))
-    if not note:
+    raw_expected_date = request.form.get("expected_delivery_date", "").strip()
+    expected_delivery_date = None
+    if raw_expected_date:
+        try:
+            expected_delivery_date = datetime.strptime(
+                raw_expected_date, "%Y-%m-%d"
+            ).replace(tzinfo=timezone.utc)
+        except ValueError:
+            flash("Enter a valid expected delivery date.", "error")
+            return redirect(url_for("dashboard"))
+    current_expected_date = order.get("expected_delivery_date")
+    expected_date_changed = (
+        expected_delivery_date.date() if expected_delivery_date else None
+    ) != (current_expected_date.date() if current_expected_date else None)
+    if next_status == current_status and not expected_date_changed and not note:
+        flash("Choose a status, expected delivery date, or customer update to change.", "error")
+        return redirect(url_for("dashboard"))
+    update_fields = {}
+    if next_status != current_status:
+        update_fields["status"] = next_status
+    if (
+        FULFILLMENT_RANK[current_status] < FULFILLMENT_RANK["paid"]
+        and FULFILLMENT_RANK[next_status] >= FULFILLMENT_RANK["paid"]
+    ):
+        update_fields["paid_at"] = datetime.now(timezone.utc)
+        update_fields["payment_confirmed_by"] = g.user["_id"]
+    if next_status == "delivered" and current_status != "delivered":
+        update_fields["delivered_at"] = datetime.now(timezone.utc)
+    if expected_date_changed:
+        if expected_delivery_date:
+            update_fields["expected_delivery_date"] = expected_delivery_date
+    if next_status != current_status and not note:
         note = f"Order status updated to {ORDER_STATUS_LABELS[next_status].lower()}."
+    if expected_date_changed:
+        date_note = (
+            f"Expected delivery: {expected_delivery_date.strftime('%d %b %Y')}."
+            if expected_delivery_date
+            else "Expected delivery date removed."
+        )
+        note = f"{note} {date_note}".strip()
+    if not note:
+        note = "Order update posted."
+    update_query = {"$push": {"updates": order_update(next_status, note)}}
+    if update_fields:
+        update_query["$set"] = update_fields
+    if expected_date_changed and not expected_delivery_date:
+        update_query["$unset"] = {"expected_delivery_date": ""}
     result = database.orders.update_one(
         {"_id": order["_id"], "status": current_status},
-        {
-            "$set": {"status": next_status},
-            "$push": {"updates": order_update(next_status, note)},
-        },
+        update_query,
     )
     if not result.matched_count:
         abort(409)
@@ -882,7 +1321,7 @@ def add_order_update(order_id):
         order["user_id"],
         f"Update for order {order.get('tracking_id', order['_id'])}: {ORDER_STATUS_LABELS[next_status]}. {note}",
     )
-    flash("Order update posted and customer notified.", "success")
+    flash("Order update posted.", "success")
     return redirect(url_for("dashboard"))
 
 
@@ -1024,4 +1463,8 @@ def not_found(_error):
 
 
 if __name__ == "__main__":
-    app.run(debug=os.environ.get("FLASK_DEBUG", "true").lower() == "true")
+    ssl_context = (HTTPS_CERTIFICATE, HTTPS_PRIVATE_KEY) if HTTPS_CERTIFICATE else None
+    app.run(
+        debug=app.config["FLASK_DEBUG"],
+        ssl_context=ssl_context,
+    )
