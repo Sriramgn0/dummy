@@ -105,19 +105,24 @@ DIGITAL_SIZE_DESCRIPTIONS = {
     ),
 }
 CAD_SIZES = ("A0", "A1", "A2", "A3", "A4", "Custom")
+CAD_PAPER_TYPES = (
+    "Plain Paper 100GSM",
+    "Tracing Paper",
+    "Blueprint Paper",
+    "Glossy Paper",
+)
 PRINT_TYPES = ("black_white", "color")
 PRINT_SIDES = ("front_only", "front_back")
 ORDER_STATUS_LABELS = {
     "pending_quote": "Awaiting quote",
     "awaiting_payment": "Payment due",
-    "payment_submitted": "Payment sent · awaiting confirmation",
-    "payment_submitted": "Payment sent · awaiting confirmation",
     "paid": "Paid",
     "confirmed": "Confirmed",
+    "payment_submitted": "Payment sent · awaiting confirmation",
     "printing": "Printing",
     "work_in_progress": "Work in progress",
     "ready_for_pickup": "Ready for pickup",
-    "out_for_delivery": "Out for delivery",
+    "out_for_delivery": "Dispatched",
     "delivered": "Delivered",
     "cancelled": "Cancelled",
 }
@@ -561,6 +566,9 @@ def order_items(order):
         "print_sides": order.get("print_sides"),
         "copies": order.get("copies", 1),
         "sheet_count": order.get("sheet_count"),
+        "paper_type": order.get("paper_type"),
+        "quote_paise": order.get("quote_paise"),
+        "estimate_paise": order.get("digital_estimate_paise"),
         "documents": order_documents(order),
     }]
 
@@ -759,8 +767,24 @@ def dashboard():
             "ready_for_pickup",
             "out_for_delivery",
         ]
+        order_filters = {
+            "all": ("All active orders", active_statuses),
+            "waiting_quote": ("Waiting for quotation", ["pending_quote"]),
+            "pending_payment": (
+                "Pending payment",
+                ["awaiting_payment", "payment_submitted"],
+            ),
+            "paid_not_production": ("Paid, not in production", ["paid", "confirmed"]),
+            "production": ("In production", ["printing", "work_in_progress"]),
+            "dispatch": ("Ready for pickup / dispatch", ["ready_for_pickup", "out_for_delivery"]),
+            "cancelled": ("Cancelled", ["cancelled"]),
+        }
+        selected_filter = request.args.get("order_filter", "all")
+        if selected_filter not in order_filters:
+            selected_filter = "all"
+        selected_label, selected_statuses = order_filters[selected_filter]
         orders = list(
-            database.orders.find({"status": {"$in": active_statuses}})
+            database.orders.find({"status": {"$in": selected_statuses}})
             .sort("created_at", DESCENDING)
             .limit(100)
         )
@@ -777,6 +801,9 @@ def dashboard():
             "admin.html",
             orders=orders,
             counts=counts,
+            order_filters={key: value[0] for key, value in order_filters.items()},
+            selected_filter=selected_filter,
+            selected_filter_label=selected_label,
             digital_prices=digital_price_map(database),
             digital_sizes=DIGITAL_SIZES,
             print_types=PRINT_TYPES,
@@ -1102,6 +1129,7 @@ def create_order():
                 "print_type": request.form.get(f"{prefix}[print_type]", ""),
                 "print_sides": request.form.get(f"{prefix}[print_sides]", ""),
                 "cad_size": request.form.get(f"{prefix}[cad_size]", ""),
+                "paper_type": request.form.get(f"{prefix}[paper_type]", ""),
                 "notes": request.form.get(f"{prefix}[notes]", ""),
                 "uploads": [
                     file for file in request.files.getlist(f"{prefix}[documents]")
@@ -1119,6 +1147,7 @@ def create_order():
             "print_type": request.form.get("print_type", ""),
             "print_sides": request.form.get("print_sides", "front_only"),
             "cad_size": request.form.get("cad_size", ""),
+            "paper_type": request.form.get("paper_type", ""),
             "notes": request.form.get("notes", ""),
             "uploads": [file for file in uploaded_files if file.filename],
         }]
@@ -1192,6 +1221,10 @@ def create_order():
             if paper_size not in CAD_SIZES:
                 flash("Choose a valid CAD drawing size for every item.", "error")
                 return redirect(url_for("new_order"))
+            paper_type = requested["paper_type"]
+            if paper_type not in CAD_PAPER_TYPES:
+                flash("Choose a valid paper type for every CAD item.", "error")
+                return redirect(url_for("new_order"))
             if paper_size == "Custom" and not notes:
                 flash("Add the required extra notes for a custom CAD size.", "error")
                 return redirect(url_for("new_order"))
@@ -1200,6 +1233,8 @@ def create_order():
             price_each_paise = None
             sheet_count = None
             estimate_paise = None
+        if category == "digital_printing":
+            paper_type = None
         documents = []
         for uploaded in requested["uploads"]:
             original_name = secure_filename(uploaded.filename)
@@ -1229,6 +1264,7 @@ def create_order():
             "print_sides": print_sides,
             "sheet_count": sheet_count,
             "paper_size": paper_size,
+            "paper_type": paper_type,
             "price_each_paise": price_each_paise,
             "estimate_paise": estimate_paise,
             "notes": notes,
@@ -1332,32 +1368,48 @@ def create_order():
 @app.post("/admin/orders/<order_id>/quote")
 @admin_required
 def update_quote(order_id):
-    try:
-        quote = Decimal(request.form.get("amount", "")).quantize(Decimal("0.01"))
-        quote_paise = int(quote * 100)
-    except (InvalidOperation, ValueError):
-        quote_paise = 0
-    if quote_paise <= 0:
-        flash("Enter a quotation greater than zero.", "error")
-        return redirect(url_for("dashboard"))
     database = get_database()
     query = {
         "_id": ObjectId(order_id),
-        "product_category": {"$ne": "digital_printing"},
+        "$or": [
+            {"contains_cad": True},
+            {"product_category": {"$ne": "digital_printing"}},
+        ],
         "status": {"$in": ["pending_quote", "awaiting_payment"]},
     }
     timestamp = datetime.now(timezone.utc)
     order = database.orders.find_one(query)
     if not order:
         abort(404)
+    items = order_items(order)
+    item_quote_paise = []
+    try:
+        for index, item in enumerate(items):
+            raw_quote = request.form.get(f"item_quote_{index}", "").strip()
+            if not raw_quote and len(items) == 1:
+                raw_quote = request.form.get("amount", "").strip()
+            amount = Decimal(raw_quote).quantize(Decimal("0.01"))
+            amount_paise = int(amount * 100)
+            if not amount.is_finite() or amount_paise <= 0:
+                raise InvalidOperation
+            item_quote_paise.append(amount_paise)
+    except (InvalidOperation, ValueError):
+        flash("Enter a valid quotation greater than zero for every cart item.", "error")
+        return redirect(url_for("dashboard"))
+
+    for item, amount_paise in zip(items, item_quote_paise):
+        item["quote_paise"] = amount_paise
+    quote_paise = sum(item_quote_paise) + order.get("delivery_fee_paise", 0)
+    update_values = {
+        "items": items,
+        "quote_paise": quote_paise,
+        "status": "awaiting_payment",
+        "quoted_at": timestamp,
+    }
     result = database.orders.update_one(
         query,
         {
-            "$set": {
-                "quote_paise": quote_paise,
-                "status": "awaiting_payment",
-                "quoted_at": timestamp,
-            },
+            "$set": update_values,
             "$push": {
                 "updates": order_update(
                     "awaiting_payment", f"Quotation ready: ₹{quote_paise / 100:,.2f}."
@@ -1556,6 +1608,11 @@ def add_order_update(order_id):
     if FULFILLMENT_RANK[next_status] < FULFILLMENT_RANK[current_status]:
         flash("Order status cannot move backwards.", "error")
         return redirect(url_for("dashboard"))
+    dispatch_details = request.form.get("dispatch_details", "").strip()[:500]
+    if next_status == "out_for_delivery" and not dispatch_details:
+        flash("Enter dispatch details before marking the order as dispatched.", "error")
+        return redirect(url_for("dashboard"))
+    dispatch_details_changed = dispatch_details != order.get("dispatch_details", "")
     raw_expected_date = request.form.get("expected_delivery_date", "").strip()
     expected_delivery_date = None
     if raw_expected_date:
@@ -1570,8 +1627,13 @@ def add_order_update(order_id):
     expected_date_changed = (
         expected_delivery_date.date() if expected_delivery_date else None
     ) != (current_expected_date.date() if current_expected_date else None)
-    if next_status == current_status and not expected_date_changed and not note:
-        flash("Choose a status, expected delivery date, or customer update to change.", "error")
+    if (
+        next_status == current_status
+        and not expected_date_changed
+        and not dispatch_details_changed
+        and not note
+    ):
+        flash("Choose a status, dispatch details, expected delivery date, or customer update to change.", "error")
         return redirect(url_for("dashboard"))
     update_fields = {}
     if next_status != current_status:
@@ -1587,6 +1649,11 @@ def add_order_update(order_id):
     if expected_date_changed:
         if expected_delivery_date:
             update_fields["expected_delivery_date"] = expected_delivery_date
+    if dispatch_details_changed:
+        if dispatch_details:
+            update_fields["dispatch_details"] = dispatch_details
+        else:
+            update_fields.pop("dispatch_details", None)
     if next_status != current_status and not note:
         note = f"Order status updated to {ORDER_STATUS_LABELS[next_status].lower()}."
     if expected_date_changed:
@@ -1596,6 +1663,8 @@ def add_order_update(order_id):
             else "Expected delivery date removed."
         )
         note = f"{note} {date_note}".strip()
+    if dispatch_details_changed and dispatch_details:
+        note = f"{note} Dispatch details: {dispatch_details}.".strip()
     if not note:
         note = "Order update posted."
     update_query = {"$push": {"updates": order_update(next_status, note)}}
@@ -1603,6 +1672,8 @@ def add_order_update(order_id):
         update_query["$set"] = update_fields
     if expected_date_changed and not expected_delivery_date:
         update_query["$unset"] = {"expected_delivery_date": ""}
+    if dispatch_details_changed and not dispatch_details:
+        update_query.setdefault("$unset", {})["dispatch_details"] = ""
     result = database.orders.update_one(
         {"_id": order["_id"], "status": current_status},
         update_query,
@@ -1659,6 +1730,7 @@ def download_document(order_id, document_index=None):
         abort(404)
     if g.user["role"] != "admin" and order["user_id"] != g.user["_id"]:
         abort(403)
+    preview = g.user["role"] == "admin" and request.args.get("preview") == "1"
     documents = order_documents(order)
     if document_index is None:
         document_index = 0
@@ -1670,7 +1742,7 @@ def download_document(order_id, document_index=None):
     return send_from_directory(
         UPLOAD_FOLDER,
         document["stored_name"],
-        as_attachment=True,
+        as_attachment=not preview,
         download_name=document["display_name"],
     )
 

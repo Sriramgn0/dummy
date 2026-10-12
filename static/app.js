@@ -50,6 +50,31 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  document.querySelectorAll("[data-item-quote-form]").forEach((form) => {
+    const itemQuotes = Array.from(form.querySelectorAll("[data-item-quote]"));
+    const itemsTotal = form.querySelector("[data-quote-items-total]");
+    const grandTotal = form.querySelector("[data-quote-grand-total]");
+    const deliveryFee = Number(form.dataset.deliveryFeePaise || 0);
+    const updateQuoteTotal = () => {
+      const amounts = itemQuotes.map((input) => Number(input.value));
+      const allValid = amounts.length > 0
+        && amounts.every((amount) => Number.isFinite(amount) && amount > 0);
+      if (!allValid) {
+        itemsTotal.textContent = "Enter item prices";
+        grandTotal.textContent = "Enter item prices";
+        return;
+      }
+      const itemTotal = amounts.reduce((sum, amount) => sum + amount, 0);
+      itemsTotal.textContent = `₹${itemTotal.toFixed(2)}`;
+      grandTotal.textContent = `₹${(itemTotal + deliveryFee / 100).toFixed(2)}`;
+    };
+    itemQuotes.forEach((input) => input.addEventListener("input", updateQuoteTotal));
+    updateQuoteTotal();
+  });
+  document.querySelectorAll("[data-order-filter]").forEach((select) => {
+    select.addEventListener("change", () => select.form?.requestSubmit());
+  });
+
   const fileInput = document.querySelector("#documents");
   const fileLabel = document.querySelector("[data-file-name]");
   const fileList = document.querySelector("[data-file-list]");
@@ -136,8 +161,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const categoryInputs = orderForm.querySelectorAll("[data-cart-field='product_category']");
     const deliveryInputs = orderForm.querySelectorAll("[name='delivery_type']");
     const digitalFields = orderForm.querySelectorAll("[data-digital-field]");
-    const cadField = orderForm.querySelector("[data-cad-field]");
+    const cadFields = orderForm.querySelectorAll("[data-cad-field]");
     const cadSize = orderForm.querySelector("#cad_size");
+    const paperType = orderForm.querySelector("#paper_type");
     const deliveryAddressField = orderForm.querySelector("[data-delivery-address]");
     const deliveryAddressChoice = orderForm.querySelector("[data-address-choice]");
     const newAddressField = orderForm.querySelector("[data-new-address-field]");
@@ -187,6 +213,7 @@ document.addEventListener("DOMContentLoaded", () => {
         print_type: category === "cad" ? "cad" : modeSelect.value,
         print_sides: category === "cad" ? "" : sidesSelect.value,
         cad_size: cadSize.value,
+        paper_type: category === "cad" ? paperType.value : "",
         notes: notes.value.trim(),
         files: [...selectedFiles],
         estimate_paise: null,
@@ -265,7 +292,8 @@ document.addEventListener("DOMContentLoaded", () => {
         : `₹${(item.estimate_paise / 100).toFixed(2)}`;
       title.textContent = `${itemCategory} · ${item.paper_size} · ${item.files.length} file${item.files.length === 1 ? "" : "s"}`;
       const copies = Number(item.copies);
-      detail.textContent = `${copies} print${copies === 1 ? "" : "s"} per file · ${amount}`;
+      const paperType = item.product_category === "cad" ? ` · ${item.paper_type}` : "";
+      detail.textContent = `${copies} print${copies === 1 ? "" : "s"} per file${paperType} · ${amount}`;
       remove.type = "button";
       remove.className = "remove-selected-file";
       remove.textContent = "Remove";
@@ -291,6 +319,7 @@ document.addEventListener("DOMContentLoaded", () => {
       modeSelect.selectedIndex = 0;
       sidesSelect.selectedIndex = 0;
       cadSize.selectedIndex = 0;
+      paperType.selectedIndex = 0;
       notes.value = "";
       renderSelectedFiles();
     };
@@ -337,8 +366,10 @@ document.addEventListener("DOMContentLoaded", () => {
         field.hidden = !isDigital;
         field.querySelector("select").disabled = !isDigital;
       });
-      cadField.hidden = isDigital;
-      cadSize.disabled = isDigital;
+      cadFields.forEach((field) => {
+        field.hidden = isDigital;
+        field.querySelector("select").disabled = isDigital;
+      });
       deliveryAddressField.hidden = !isDelivery;
       deliveryAddressChoice.disabled = !isDelivery;
       const isNewAddress = deliveryAddressChoice.value === "__new__";
