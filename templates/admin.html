@@ -61,7 +61,7 @@
             <div class="order-documents customer-order-documents">
               {% for document in item.documents %}
               <div class="admin-file-actions">
-                <a class="document-link" href="{{ url_for('download_document', order_id=order._id, document_index=document_index.value, preview=1) }}" target="_blank" rel="noopener"><span class="file-glyph">{{ document.document_name.rsplit('.', 1)[-1][:3]|upper }}</span><span><strong>{{ document.document_name }}</strong><small>Preview</small></span></a>
+                <a class="document-link" href="{{ url_for('download_document', order_id=order._id, document_index=document_index.value, preview=1) }}" data-file-preview data-file-name="{{ document.document_name }}"><span class="file-glyph">{{ document.document_name.rsplit('.', 1)[-1][:3]|upper }}</span><span><strong>{{ document.document_name }}</strong><small>Preview</small></span></a>
                 <a class="admin-file-download" href="{{ url_for('download_document', order_id=order._id, document_index=document_index.value) }}" download>Download</a>
               </div>
               {% set document_index.value = document_index.value + 1 %}
@@ -77,14 +77,17 @@
           {% if order.delivery_address %}<p class="customer-delivery-address">{{ order.delivery_address }}</p>{% endif %}
           {% if order.expected_delivery_date %}<div class="customer-summary-row"><span>Expected by</span><strong>{{ order.expected_delivery_date.strftime('%d %b %Y') }}</strong></div>{% endif %}
           {% if order.dispatch_details %}<div class="dispatch-details"><strong>Dispatch details</strong><p>{{ order.dispatch_details }}</p></div>{% endif %}
-          {% if order.quote_paise %}<div class="customer-summary-row admin-order-total"><span>Order total</span><strong class="customer-order-price">₹{{ order.quote_paise|money }}</strong></div>
+          {% if order.quote_paise %}
+          <div class="customer-summary-row"><span>Additional charges</span><strong>₹{{ order.get('additional_charges_paise', 0)|money }}</strong></div>
+          <div class="customer-summary-row"><span>Delivery charges</span><strong>₹{{ order.get('quoted_delivery_charges_paise', order.get('delivery_fee_paise', 0))|money }}</strong></div>
+          <div class="customer-summary-row admin-order-total"><span>Order total</span><strong class="customer-order-price">₹{{ order.quote_paise|money }}</strong></div>
           {% elif order.get('digital_estimate_paise') %}<div class="customer-summary-row"><span>Digital estimate</span><strong>₹{{ (order.get('digital_estimate_paise', 0) + order.get('delivery_fee_paise', 0))|money }}</strong></div>{% endif %}
           {% if order.notes %}<p class="customer-order-note"><strong>Order note:</strong> {{ order.notes }}</p>{% endif %}
         </aside>
       </div>
       {% if order.status in ['pending_quote', 'awaiting_payment'] and order.get('contains_cad', order.get('product_category') != 'digital_printing') %}
       <section class="admin-order-tools">
-        <form class="quote-form item-quote-form" method="post" action="{{ url_for('update_quote', order_id=order._id) }}" data-item-quote-form data-delivery-fee-paise="{{ order.get('delivery_fee_paise', 0) }}">
+        <form class="quote-form item-quote-form" method="post" action="{{ url_for('update_quote', order_id=order._id) }}" data-item-quote-form>
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <strong class="item-quote-title">Set a price for each cart item</strong>
           {% for item in order_items(order) %}
@@ -94,7 +97,10 @@
           </label>
           {% endfor %}
           <div class="item-quote-total"><span>Items total</span><strong data-quote-items-total>Enter item prices</strong></div>
-          {% if order.delivery_fee_paise %}<div class="item-quote-total"><span>Delivery</span><strong>₹{{ order.delivery_fee_paise|money }}</strong></div>{% endif %}
+          <label class="item-quote-row charge-quote-row" for="additional-charges-{{ order._id }}"><span>Additional charges</span><span class="currency-input"><span>₹</span><input id="additional-charges-{{ order._id }}" name="additional_charges" type="number" min="0" step="0.01" data-quote-charge value="{{ '%.2f'|format(order.get('additional_charges_paise', 0) / 100) }}" placeholder="0.00"></span></label>
+          <label class="item-quote-row charge-quote-row" for="delivery-charges-{{ order._id }}"><span>Delivery charges</span><span class="currency-input"><span>₹</span><input id="delivery-charges-{{ order._id }}" name="delivery_charges" type="number" min="0" step="0.01" data-quote-charge value="{{ '%.2f'|format(order.get('quoted_delivery_charges_paise', 0) / 100) }}" placeholder="0.00"></span></label>
+          <div class="item-quote-total"><span>Additional charges</span><strong data-additional-charges-total>₹{{ order.get('additional_charges_paise', 0)|money }}</strong></div>
+          <div class="item-quote-total"><span>Delivery charges</span><strong data-delivery-charges-total>₹{{ order.get('quoted_delivery_charges_paise', 0)|money }}</strong></div>
           <div class="item-quote-total item-quote-grand-total"><span>Total quotation</span><strong data-quote-grand-total>Enter item prices</strong></div>
           <button class="button button-quiet" type="submit">Send quotation <span aria-hidden="true">↗</span></button>
         </form>

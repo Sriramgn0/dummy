@@ -39,6 +39,84 @@ document.addEventListener("DOMContentLoaded", () => {
     closeButtons[0]?.focus();
   }
 
+  const filePreviewModal = document.querySelector("[data-file-preview-modal]");
+  if (filePreviewModal) {
+    const previewDialog = filePreviewModal.querySelector(".file-preview-dialog");
+    const previewTitle = filePreviewModal.querySelector("[data-file-preview-title]");
+    const previewHint = filePreviewModal.querySelector("[data-file-preview-hint]");
+    const previewContent = filePreviewModal.querySelector("[data-file-preview-content]");
+    const previewDownload = filePreviewModal.querySelector("[data-file-preview-download]");
+    let previousFocus = null;
+    const closePreview = () => {
+      filePreviewModal.hidden = true;
+      previewContent.replaceChildren();
+      document.body.classList.remove("file-preview-open");
+      previousFocus?.focus();
+      previousFocus = null;
+    };
+    const closeButtons = filePreviewModal.querySelectorAll("[data-file-preview-close]");
+    closeButtons.forEach((button) => button.addEventListener("click", closePreview));
+    filePreviewModal.addEventListener("click", (event) => {
+      if (event.target === filePreviewModal) closePreview();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (filePreviewModal.hidden) return;
+      if (event.key === "Escape") closePreview();
+      if (event.key === "Tab") {
+        const focusable = [...filePreviewModal.querySelectorAll("a[href], button:not([disabled])")];
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
+    document.addEventListener("click", (event) => {
+      const previewLink = event.target.closest("[data-file-preview]");
+      if (!previewLink) return;
+      event.preventDefault();
+      previousFocus = previewLink;
+      const fileName = previewLink.dataset.fileName || "File preview";
+      const extension = fileName.split(".").pop().toLowerCase();
+      previewTitle.textContent = fileName;
+      previewContent.replaceChildren();
+      const downloadLink = previewLink.parentElement.querySelector(".admin-file-download");
+      const downloadUrl = new URL(previewLink.href);
+      downloadUrl.searchParams.delete("preview");
+      previewDownload.href = downloadLink?.href || downloadUrl.href;
+      previewHint.textContent = "";
+      if (extension === "pdf") {
+        const frame = document.createElement("iframe");
+        frame.className = "file-preview-frame";
+        frame.src = previewLink.href;
+        frame.title = `Preview of ${fileName}`;
+        previewContent.append(frame);
+        previewHint.textContent = "PDF preview";
+      } else if (["jpg", "jpeg", "png"].includes(extension)) {
+        const image = document.createElement("img");
+        image.className = "file-preview-image";
+        image.src = previewLink.href;
+        image.alt = fileName;
+        previewContent.append(image);
+        previewHint.textContent = "Image preview";
+      } else {
+        const message = document.createElement("p");
+        message.className = "file-preview-unavailable";
+        message.textContent = "This document format cannot be previewed in the browser. Download the file to view it.";
+        previewContent.append(message);
+        previewHint.textContent = "Preview not available";
+      }
+      filePreviewModal.hidden = false;
+      document.body.classList.add("file-preview-open");
+      closeButtons[0]?.focus();
+    });
+  }
+
   const isAndroid = /Android/i.test(navigator.userAgent);
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -52,23 +130,32 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.querySelectorAll("[data-item-quote-form]").forEach((form) => {
     const itemQuotes = Array.from(form.querySelectorAll("[data-item-quote]"));
+    const chargeInputs = Array.from(form.querySelectorAll("[data-quote-charge]"));
     const itemsTotal = form.querySelector("[data-quote-items-total]");
+    const additionalChargesTotal = form.querySelector("[data-additional-charges-total]");
+    const deliveryChargesTotal = form.querySelector("[data-delivery-charges-total]");
     const grandTotal = form.querySelector("[data-quote-grand-total]");
-    const deliveryFee = Number(form.dataset.deliveryFeePaise || 0);
     const updateQuoteTotal = () => {
       const amounts = itemQuotes.map((input) => Number(input.value));
+      const charges = chargeInputs.map((input) => input.value.trim() === "" ? 0 : Number(input.value));
       const allValid = amounts.length > 0
-        && amounts.every((amount) => Number.isFinite(amount) && amount > 0);
+        && amounts.every((amount) => Number.isFinite(amount) && amount > 0)
+        && charges.every((amount) => Number.isFinite(amount) && amount >= 0);
       if (!allValid) {
         itemsTotal.textContent = "Enter item prices";
         grandTotal.textContent = "Enter item prices";
         return;
       }
       const itemTotal = amounts.reduce((sum, amount) => sum + amount, 0);
+      const additionalCharges = charges[0] || 0;
+      const deliveryCharges = charges[1] || 0;
       itemsTotal.textContent = `₹${itemTotal.toFixed(2)}`;
-      grandTotal.textContent = `₹${(itemTotal + deliveryFee / 100).toFixed(2)}`;
+      additionalChargesTotal.textContent = `₹${additionalCharges.toFixed(2)}`;
+      deliveryChargesTotal.textContent = `₹${deliveryCharges.toFixed(2)}`;
+      grandTotal.textContent = `₹${(itemTotal + additionalCharges + deliveryCharges).toFixed(2)}`;
     };
     itemQuotes.forEach((input) => input.addEventListener("input", updateQuoteTotal));
+    chargeInputs.forEach((input) => input.addEventListener("input", updateQuoteTotal));
     updateQuoteTotal();
   });
   document.querySelectorAll("[data-order-filter]").forEach((select) => {

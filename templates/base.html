@@ -36,6 +36,16 @@
     {% endif %}
   {% endwith %}
   {% block content %}{% endblock %}
+  <div class="file-preview-backdrop" data-file-preview-modal hidden>
+    <section class="file-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="file-preview-title" aria-describedby="file-preview-hint" tabindex="-1">
+      <header class="file-preview-header">
+        <div><h2 id="file-preview-title" data-file-preview-title>File preview</h2><p id="file-preview-hint" data-file-preview-hint></p></div>
+        <button class="file-preview-close" type="button" data-file-preview-close aria-label="Close preview">×</button>
+      </header>
+      <div class="file-preview-content" data-file-preview-content></div>
+      <footer class="file-preview-footer"><a class="button button-quiet" data-file-preview-download download>Download file</a><button class="button button-primary" type="button" data-file-preview-close>Close preview</button></footer>
+    </section>
+  </div>
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </body>
 </html>

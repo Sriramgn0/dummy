@@ -1397,12 +1397,38 @@ def update_quote(order_id):
         flash("Enter a valid quotation greater than zero for every cart item.", "error")
         return redirect(url_for("dashboard"))
 
+    try:
+        additional_charges = Decimal(
+            request.form.get("additional_charges", "0").strip() or "0"
+        ).quantize(Decimal("0.01"))
+        delivery_charges = Decimal(
+            request.form.get("delivery_charges", "0").strip() or "0"
+        ).quantize(Decimal("0.01"))
+        if (
+            not additional_charges.is_finite()
+            or not delivery_charges.is_finite()
+            or additional_charges < 0
+            or delivery_charges < 0
+        ):
+            raise InvalidOperation
+        additional_charges_paise = int(additional_charges * 100)
+        delivery_charges_paise = int(delivery_charges * 100)
+    except (InvalidOperation, ValueError):
+        flash("Additional and delivery charges must be zero or more.", "error")
+        return redirect(url_for("dashboard"))
+
     for item, amount_paise in zip(items, item_quote_paise):
         item["quote_paise"] = amount_paise
-    quote_paise = sum(item_quote_paise) + order.get("delivery_fee_paise", 0)
+    quote_paise = (
+        sum(item_quote_paise)
+        + additional_charges_paise
+        + delivery_charges_paise
+    )
     update_values = {
         "items": items,
         "quote_paise": quote_paise,
+        "additional_charges_paise": additional_charges_paise,
+        "quoted_delivery_charges_paise": delivery_charges_paise,
         "status": "awaiting_payment",
         "quoted_at": timestamp,
     }
@@ -1730,7 +1756,7 @@ def download_document(order_id, document_index=None):
         abort(404)
     if g.user["role"] != "admin" and order["user_id"] != g.user["_id"]:
         abort(403)
-    preview = g.user["role"] == "admin" and request.args.get("preview") == "1"
+    preview = request.args.get("preview") == "1"
     documents = order_documents(order)
     if document_index is None:
         document_index = 0
