@@ -39,7 +39,10 @@
               {% endif %}
               <div class="order-documents customer-order-documents">
                 {% for document in item.documents %}
-                <a class="document-link" href="{{ url_for('download_document', order_id=order._id, document_index=document_index.value) }}"><span class="file-glyph">{{ document.document_name.rsplit('.', 1)[-1][:3]|upper }}</span><span><strong>{{ document.document_name }}</strong><small>Download file</small></span></a>
+                <div class="admin-file-actions">
+                  <a class="document-link" href="{{ url_for('download_document', order_id=order._id, document_index=document_index.value, preview=1) }}" data-file-preview data-file-name="{{ document.document_name }}"><span class="file-glyph">{{ document.document_name.rsplit('.', 1)[-1][:3]|upper }}</span><span><strong>{{ document.document_name }}</strong><small>Preview</small></span></a>
+                  <a class="admin-file-download" href="{{ url_for('download_document', order_id=order._id, document_index=document_index.value) }}" download>Download</a>
+                </div>
                 {% set document_index.value = document_index.value + 1 %}
                 {% endfor %}
               </div>
@@ -49,6 +52,10 @@
           </section>
           <aside class="customer-order-summary">
             <div class="customer-summary-row"><span>Order status</span><strong>{{ order.status|status_label }}</strong></div>
+            {% if order.quote_paise %}
+            <div class="customer-summary-row"><span>Additional charges</span><strong>₹{{ order.get('additional_charges_paise', 0)|money }}</strong></div>
+            <div class="customer-summary-row"><span>Delivery charges</span><strong>₹{{ order.get('quoted_delivery_charges_paise', order.get('delivery_fee_paise', 0))|money }}</strong></div>
+            {% endif %}
             <div class="customer-summary-row"><span>{% if order.get('contains_cad') %}Quotation total{% else %}Order total{% endif %}</span>{% if order.quote_paise %}<strong class="customer-order-price">₹{{ order.quote_paise|money }}</strong>{% elif order.get('digital_estimate_paise') is not none and order.status != 'pending_quote' %}<strong class="customer-order-price">₹{{ (order.get('digital_estimate_paise', 0) + order.get('delivery_fee_paise', 0))|money }}</strong>{% else %}<strong class="customer-summary-pending">Being prepared</strong>{% endif %}</div>
             <div class="customer-summary-row"><span>Fulfilment</span><strong>{{ order.get('delivery_type', 'pickup')|title }}</strong></div>
             {% if order.delivery_address %}<p class="customer-delivery-address">{{ order.delivery_address }}</p>{% endif %}
@@ -69,6 +76,8 @@
               {% if upi_id %}<span class="upi-id">{{ upi_id }}</span>{% else %}<span class="configuration-hint">UPI app payment is not configured. You can still pay using the QR code.</span>{% endif %}
             </div>
             <div class="upi-actions">
+              <form class="upi-payment-report-form" method="post" action="{{ url_for('submit_upi_payment', order_id=order._id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               {% if upi_id %}
               {% set upi_query = 'pa=' ~ (upi_id|urlencode) ~ '&pn=' ~ (upi_payee_name|urlencode) ~ '&am=' ~ (('%.2f'|format(order.quote_paise / 100))|urlencode) ~ '&cu=INR&tn=' ~ (order.get('tracking_id', 'RP-' ~ order._id)|urlencode) %}
               <span>Choose your UPI app</span>
@@ -78,28 +87,23 @@
                 <a class="button button-pay" data-upi-android-href="intent://pay?{{ upi_query }}#Intent;scheme=upi;package=net.one97.paytm;end" data-upi-ios-href="paytmmp://pay?{{ upi_query }}" href="upi://pay?{{ upi_query }}">Paytm</a>
                 <a class="button button-pay" href="upi://pay?{{ upi_query }}">Other UPI app</a>
               </div>
-              <form method="post" action="{{ url_for('submit_upi_payment', order_id=order._id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="payment_channel" value="upi_app">
-                <label for="payment-reference-{{ order._id }}">UPI reference <span class="optional">OPTIONAL</span></label>
-                <input id="payment-reference-{{ order._id }}" name="payment_reference" maxlength="100" placeholder="Transaction ID">
-                <button class="button button-primary" type="submit">I’ve sent payment <span aria-hidden="true">✓</span></button>
-              </form>
               {% endif %}
               <details class="upi-qr-option">
                 <summary>Pay using QR code and enter transaction ID</summary>
                 <div class="upi-qr-content">
                   <img src="{{ url_for('static', filename='upi-qr.png') }}" alt="UPI payment QR code">
                   <p>Scan this code in your UPI app and pay the order amount shown above.</p>
-                  <form method="post" action="{{ url_for('submit_upi_payment', order_id=order._id) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="payment_channel" value="upi_qr">
-                    <label for="qr-payment-reference-{{ order._id }}">Transaction ID</label>
-                    <input id="qr-payment-reference-{{ order._id }}" name="payment_reference" maxlength="100" placeholder="Enter the transaction ID" required>
-                    <button class="button button-primary" type="submit">Submit transaction ID <span aria-hidden="true">✓</span></button>
-                  </form>
                 </div>
               </details>
+              <fieldset class="payment-channel-select">
+                <legend>How did you pay?</legend>
+                {% if upi_id %}<label><input type="radio" name="payment_channel" value="upi_app" checked> UPI app</label>{% endif %}
+                <label><input type="radio" name="payment_channel" value="upi_qr" {% if not upi_id %}checked{% endif %}> QR code</label>
+              </fieldset>
+              <label for="payment-reference-{{ order._id }}">Transaction ID</label>
+              <input id="payment-reference-{{ order._id }}" name="payment_reference" maxlength="100" placeholder="Enter the transaction ID" required>
+              <button class="button button-primary" type="submit">I’ve sent payment <span aria-hidden="true">✓</span></button>
+              </form>
             </div>
           </div>
         </section>

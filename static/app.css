@@ -238,6 +238,20 @@ a { color: inherit; }
 .document-link strong { max-width: 230px; overflow: hidden; color: var(--ink); font-size: 11px; text-overflow: ellipsis; }
 .document-link small { color: #90928b; font-size: 9px; }
 .file-glyph { display: grid; width: 31px; height: 36px; flex: none; place-items: center; border: 1px solid #d8d8d1; border-radius: 2px; background: #fffefa; color: var(--blue); font-size: 8px; font-weight: 700; }
+.file-preview-backdrop[hidden] { display: none; }
+.file-preview-backdrop { position: fixed; z-index: 140; inset: 0; display: grid; place-items: center; padding: clamp(10px, 3vw, 28px); background: #171d2680; backdrop-filter: blur(3px); }
+.file-preview-dialog { display: grid; width: min(100%, 1100px); max-height: 94vh; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; background: var(--white); box-shadow: 0 24px 80px #11192355; }
+.file-preview-header, .file-preview-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 17px; }
+.file-preview-header { border-bottom: 1px solid var(--line); }
+.file-preview-header h2 { overflow: hidden; margin: 0; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.file-preview-header p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
+.file-preview-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; font-size: 21px; }
+.file-preview-content { display: grid; min-height: 220px; overflow: auto; place-items: center; background: #292d33; }
+.file-preview-frame { width: 100%; height: min(72vh, 850px); border: 0; background: white; }
+.file-preview-image { display: block; max-width: 100%; max-height: 72vh; object-fit: contain; }
+.file-preview-unavailable { max-width: 420px; margin: 24px; color: white; font-size: 13px; line-height: 1.6; text-align: center; }
+.file-preview-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
+body.file-preview-open { overflow: hidden; }
 .table-sub { color: #94968f; }
 .status { display: inline-flex; align-items: center; gap: 6px; color: #696c65; font-size: 10px; }
 .status i { width: 6px; height: 6px; border-radius: 50%; background: #d5a039; }
@@ -669,10 +683,14 @@ a { color: inherit; }
 .upi-qr-content form label { grid-column: 1 / -1; color: #555851; font-size: 9px; font-weight: 700; }
 .upi-qr-content form input { min-height: 35px; border: 1px solid var(--line); padding: 7px 9px; background: #fffefa; font-size: 10px; }
 .upi-qr-content form .button { min-height: 35px; padding: 0 10px; font-size: 9px; }
-.upi-actions form { display: grid; grid-template-columns: minmax(100px, 1fr) auto; align-items: end; gap: 7px; }
-.upi-actions form label { grid-column: 1 / -1; color: #555851; font-size: 9px; font-weight: 700; }
-.upi-actions form input { min-height: 35px; border: 1px solid var(--line); padding: 7px 9px; background: #fffefa; font-size: 10px; }
-.upi-actions form .button { min-height: 35px; padding: 0 10px; font-size: 9px; }
+.upi-payment-report-form { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 8px; }
+.upi-payment-report-form > label { color: #555851; font-size: 9px; font-weight: 700; }
+.upi-payment-report-form > input[name="payment_reference"] { min-height: 35px; border: 1px solid var(--line); padding: 7px 9px; background: #fffefa; font-size: 10px; }
+.upi-payment-report-form > .button { justify-self: start; min-height: 35px; padding: 0 10px; font-size: 9px; }
+.payment-channel-select { display: flex; flex-wrap: wrap; gap: 12px; margin: 0; border: 0; padding: 2px 0; color: #555851; font-size: 10px; }
+.payment-channel-select legend { margin-bottom: 5px; font-size: 9px; font-weight: 700; }
+.payment-channel-select label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.payment-channel-select input { accent-color: var(--blue); }
 .payment-waiting { display: flex; flex-wrap: wrap; gap: 8px 18px; border-left: 3px solid #d49b35; padding: 11px 14px; background: #f6f1e7; color: #696c65; font-size: 10px; }
 .payment-waiting strong { color: var(--ink); }
 .delivery-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; border: 0; padding: 0; }
@@ -698,8 +716,7 @@ a { color: inherit; }
   .customer-create-form .field:has(textarea) { grid-column: auto; }
   .upi-payment-row td { padding-left: 8px; }
   .upi-payment-panel { grid-template-columns: 1fr; gap: 12px; }
-  .upi-actions form { grid-template-columns: 1fr; }
-  .upi-actions form label { grid-column: auto; }
+  .upi-payment-report-form > .button { justify-self: stretch; }
   .file-cleanup-panel { padding: 14px; }
   .file-cleanup-filters { grid-template-columns: 1fr 1fr; gap: 10px; }
   .file-cleanup-filters .field:first-child { grid-column: 1 / -1; }
