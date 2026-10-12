@@ -291,6 +291,9 @@ a { color: inherit; }
 .mark-blue { background: var(--blue); }
 .mark-green { background: var(--green); }
 .admin-orders-section { margin-top: 27px; }
+.admin-order-filter { display: flex; align-items: center; gap: 10px; margin: 20px 0 0; }
+.admin-order-filter label { color: #777a73; font-size: 10px; font-weight: 700; }
+.admin-order-filter select { min-height: 36px; min-width: min(100%, 260px); border: 1px solid var(--line); padding: 6px 9px; background: var(--white); color: var(--ink); font-size: 11px; }
 .admin-order-list { border-top: 1px solid var(--line); }
 .admin-order { border-bottom: 1px solid var(--line); padding: 16px 0 13px; }
 .admin-order-number { display: flex; align-items: baseline; gap: 8px; margin: 0 0 9px 41px; }
@@ -300,6 +303,9 @@ a { color: inherit; }
 .admin-order-main { display: grid; grid-template-columns: minmax(200px, 1.5fr) minmax(150px, 1fr) minmax(120px, .8fr) minmax(120px, .7fr); align-items: center; gap: 14px; }
 .admin-order-main .document-link { min-width: 0; }
 .admin-order-main { grid-template-columns: minmax(0, 1fr) auto; }
+.admin-file-actions { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.admin-file-actions .document-link { flex: 1; }
+.admin-file-download { flex: none; color: var(--blue); font-size: 9px; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .admin-cart-details { display: grid; gap: 9px; margin: 12px 0 0 41px; }
 .admin-cart-item { display: grid; gap: 8px; border: 1px solid var(--line); padding: 11px 12px; background: #fffefa; }
 .admin-cart-item-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
@@ -320,6 +326,14 @@ a { color: inherit; }
 .order-notes span { margin-right: 8px; color: #a0a198; font-size: 8px; font-weight: 700; letter-spacing: .7px; }
 .quote-row { display: flex; justify-content: flex-end; margin-top: 11px; }
 .quote-form { display: flex; align-items: center; gap: 9px; }
+.item-quote-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; }
+.item-quote-title { grid-column: 1 / -1; color: var(--ink); font-size: 11px; }
+.item-quote-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; grid-column: 1 / -1; color: #555851; font-size: 10px; }
+.item-quote-row .currency-input { flex: none; }
+.item-quote-total { display: flex; justify-content: space-between; gap: 16px; grid-column: 1 / -1; color: #777a73; font-size: 10px; }
+.item-quote-total strong { color: var(--ink); }
+.item-quote-grand-total { border-top: 1px solid var(--line); padding-top: 9px; color: var(--ink); font-weight: 700; }
+.item-quote-form > button { grid-column: 1 / -1; justify-self: end; }
 .quote-form label { margin-right: 2px; font-size: 10px; }
 .currency-input { display: flex; height: 34px; align-items: center; border: 1px solid var(--line); background: #fffefa; color: #72756d; font-size: 11px; }
 .currency-input > span { padding-left: 9px; }
@@ -328,10 +342,21 @@ a { color: inherit; }
 .paid-summary > span:first-child { font-weight: 700; letter-spacing: .7px; }
 .paid-summary strong { color: var(--ink); font-size: 13px; }
 .payment-reference { color: #92948d; }
+.customer-item-quote { margin: 8px 0 0; color: #777a73; font-size: 10px; }
+.customer-item-quote strong { color: var(--ink); }
+.dispatch-details { border-top: 1px solid var(--line); padding-top: 9px; font-size: 10px; }
+.dispatch-details strong { color: var(--ink); }
+.dispatch-details p { margin: 4px 0 0; color: #6c6f68; white-space: pre-line; }
 .admin-delivery-form { display: grid; grid-template-columns: minmax(145px, .7fr) minmax(145px, .8fr) minmax(220px, 1.4fr) auto; align-items: end; gap: 10px; margin-top: 13px; border-top: 1px solid #e9e8e2; padding-top: 12px; }
 .admin-delivery-form .field { gap: 5px; }
 .admin-delivery-form .field label { color: #777a73; font-size: 9px; }
 .admin-delivery-form .field input, .admin-delivery-form .field select { min-height: 35px; font-size: 10px; }
+@media (max-width: 760px) {
+  .admin-delivery-form { grid-template-columns: 1fr 1fr; }
+  .item-quote-form { grid-template-columns: 1fr; }
+  .item-quote-row { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .item-quote-form > button { justify-self: stretch; }
+}
 .pricing-section { border-top: 1px solid var(--line); padding-top: 22px; }
 .pricing-intro { margin: -7px 0 14px; color: var(--muted); font-size: 10px; }
 .rate-card-form { display: grid; justify-items: start; gap: 13px; }
