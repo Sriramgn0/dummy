@@ -3,7 +3,7 @@
 {% block content %}
 <header class="topbar">
   <a class="brand" href="{{ url_for('dashboard') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
-  <nav class="admin-nav"><a href="{{ url_for('digital_prices') }}">Prices</a><a href="{{ url_for('completed_orders') }}">Completed</a><a href="{{ url_for('customers') }}">Customers</a><a href="{{ url_for('new_customer') }}">Add customer</a></nav>
+  <nav class="admin-nav"><a href="{{ url_for('digital_prices') }}">Prices</a><a href="{{ url_for('completed_orders') }}">Completed</a><a href="{{ url_for('admin_bills') }}">Bills</a><a href="{{ url_for('customers') }}">Customers</a><a href="{{ url_for('new_customer') }}">Add customer</a></nav>
   <div class="topbar-right"><span class="admin-tag"><span class="admin-tag-dot"></span> ADMIN DESK</span><span class="user-chip"><span class="avatar avatar-admin">CM</span><span>{{ current_user.name }}</span></span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet logout-button" type="submit">Log out</button></form></div>
 </header>
 <main class="workspace admin-workspace">

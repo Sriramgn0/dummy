@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{% if purpose == 'signup' %}Verify mobile | CAD Master{% else %}Verify recovery | CAD Master{% endif %}{% endblock %}
+{% block content %}
+<main class="signup-shell">
+  <header class="signup-header">
+    <a class="brand" href="{{ url_for('home') }}"><img class="brand-logo" src="{{ url_for('static', filename='cad-master-logo.jpg') }}" alt=""><span>CAD <span class="brand-thin">Master</span></span></a>
+    <a class="signup-back" href="{{ url_for('login') }}">Sign in <span aria-hidden="true">↗</span></a>
+  </header>
+  <section class="signup-main">
+    <p class="eyebrow">SMS VERIFICATION</p>
+    {% if purpose == 'signup' %}
+    <h1>Verify your<br>mobile number.</h1>
+    <p class="muted">Enter the code sent to {{ masked_phone }} to finish creating your customer account.</p>
+    {% else %}
+    <h1>Confirm it’s<br>your account.</h1>
+    <p class="muted">If your account details match, a recovery code was sent to {{ masked_phone }}. Enter it to continue.</p>
+    {% endif %}
+    {% if form_error %}<p class="auth-form-error" role="alert">{{ form_error }}</p>{% endif %}
+    <form class="signup-form" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,10}" maxlength="10" placeholder="Enter SMS code" required autofocus></div>
+      <button class="button button-primary button-wide" type="submit">Verify code <span aria-hidden="true">↗</span></button>
+    </form>
+    <form class="auth-resend-form" method="post" action="{{ url_for('resend_auth_code') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="button button-quiet" type="submit">Send a new code</button>
+    </form>
+    {% if purpose == 'signup' %}
+    <p class="signup-login-note">Entered the wrong details? <a href="{{ url_for('signup') }}">Start again</a>.</p>
+    {% else %}
+    <p class="signup-login-note"><a href="{{ url_for('forgot_password') }}">Start password recovery again</a>.</p>
+    {% endif %}
+  </section>
+  <footer class="signup-footer"><span>CAD MASTER <span class="footer-dot">·</span> PRINTED WITH CARE</span><span>SECURE CUSTOMER ACCESS</span></footer>
+</main>
+{% endblock %}

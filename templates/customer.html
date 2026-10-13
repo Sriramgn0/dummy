@@ -62,6 +62,7 @@
             {% if order.expected_delivery_date %}<div class="customer-summary-row"><span>Expected by</span><strong>{{ order.expected_delivery_date.strftime('%d %b %Y') }}</strong></div>{% endif %}
             {% if order.dispatch_details %}<div class="dispatch-details"><strong>Dispatch details</strong><p>{{ order.dispatch_details }}</p></div>{% endif %}
             <div class="customer-order-actions">
+              {% if order.invoice_number %}<a class="button button-quiet" href="{{ url_for('download_order_bill', order_id=order._id) }}">Download bill</a>{% endif %}
               {% if order.status in ['pending_quote', 'awaiting_payment'] %}<form method="post" action="{{ url_for('cancel_order', order_id=order._id) }}" class="cancel-order-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-cancel" type="submit" data-cancel-order>Cancel order</button></form>{% elif order.status in ['paid', 'confirmed', 'printing', 'work_in_progress', 'ready_for_pickup', 'out_for_delivery'] %}<span class="paid-mark">✓ Payment received</span>{% endif %}
             </div>
           </aside>
