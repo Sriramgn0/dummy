@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 from xml.sax.saxutils import escape
 import certifi
@@ -29,12 +30,14 @@ from flask import (
     session,
     url_for,
 )
-from pymongo import DESCENDING, MongoClient
+from pymongo import DESCENDING, MongoClient, ReturnDocument
 from pymongo.errors import PyMongoError
-from reportlab.lib.pagesizes import A6
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.pagesizes import A6, letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -158,6 +161,13 @@ app.config.update(
     MONGO_DATABASE=os.environ.get("MONGO_DATABASE", "raju_printer"),
     UPI_ID=os.environ.get("RAJU_UPI_ID", ""),
     UPI_PAYEE_NAME=os.environ.get("RAJU_UPI_NAME", "CAD Master"),
+    BILLING_BUSINESS_NAME=os.environ.get("BILLING_BUSINESS_NAME", "CAD Master").strip(),
+    BILLING_GSTIN=os.environ.get("BILLING_GSTIN", "").strip(),
+    BILLING_PHONE=os.environ.get("BILLING_PHONE", "").strip(),
+    BILLING_EMAIL=os.environ.get("BILLING_EMAIL", "").strip(),
+    BILLING_ADDRESS=os.environ.get("BILLING_ADDRESS", "").strip(),
+    BILLING_STATE=os.environ.get("BILLING_STATE", "").strip(),
+    BILLING_INVOICE_PREFIX=os.environ.get("BILLING_INVOICE_PREFIX", "CM").strip() or "CM",
     RAJU_ENV=RAJU_ENV,
     FLASK_DEBUG=os.environ.get("FLASK_DEBUG", "false").lower() == "true",
     RAJU_DEMO_MODE=os.environ.get("RAJU_DEMO_MODE", "false").lower() == "true",
@@ -180,6 +190,12 @@ app.config.update(
     WHATSAPP_TEMPLATE_NAME=os.environ.get("WHATSAPP_TEMPLATE_NAME", "raju_printer_update"),
     WHATSAPP_TEMPLATE_LANGUAGE=os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE", "en_US"),
     WHATSAPP_API_VERSION=os.environ.get("WHATSAPP_API_VERSION", "v23.0"),
+    TWILIO_ACCOUNT_SID=os.environ.get("TWILIO_ACCOUNT_SID", "").strip(),
+    TWILIO_AUTH_TOKEN=os.environ.get("TWILIO_AUTH_TOKEN", "").strip(),
+    TWILIO_VERIFY_SERVICE_SID=os.environ.get("TWILIO_VERIFY_SERVICE_SID", "").strip(),
+    SMS_AUTHENTICATION_ENABLED=os.environ.get(
+        "SMS_AUTHENTICATION_ENABLED", "true"
+    ).strip().lower() in {"1", "true", "yes", "on"},
 )
 if not app.config["SECRET_KEY"]:
     raise RuntimeError("FLASK_SECRET_KEY must be set in the environment or .env file.")
@@ -231,8 +247,11 @@ def get_database():
                 unique=True,
             )
             database.orders.create_index("tracking_id", unique=True, sparse=True)
+            database.orders.create_index("invoice_number", unique=True, sparse=True)
+            database.orders.create_index("invoice_generated_at")
             database.login_sessions.create_index([("user_id", 1), ("created_at", DESCENDING)])
             database.login_sessions.create_index("expires_at", expireAfterSeconds=0)
+            database.auth_challenges.create_index("expires_at", expireAfterSeconds=0)
         except PyMongoError as error:
             if client is not None:
                 client.close()
@@ -290,6 +309,100 @@ def seed_initial_accounts(database):
 def normalize_whatsapp_number(value):
     number = re.sub(r"[\s().-]", "", value or "")
     return number if re.fullmatch(r"\+[1-9]\d{7,14}", number) else ""
+
+
+AUTH_CHALLENGE_TTL = timedelta(minutes=10)
+AUTH_CODE_PATTERN = re.compile(r"\d{4,10}")
+
+
+def twilio_verify_request(action, phone_number, code=None):
+    account_sid = app.config["TWILIO_ACCOUNT_SID"]
+    auth_token = app.config["TWILIO_AUTH_TOKEN"]
+    service_sid = app.config["TWILIO_VERIFY_SERVICE_SID"]
+    if not account_sid or not auth_token or not service_sid:
+        raise RuntimeError("Twilio Verify is not configured.")
+
+    endpoint = (
+        "Verifications"
+        if action == "send"
+        else "VerificationCheck"
+    )
+    url = (
+        f"https://verify.twilio.com/v2/Services/{service_sid}/{endpoint}"
+    )
+    payload = {"To": phone_number}
+    if action == "send":
+        payload["Channel"] = "sms"
+    else:
+        payload["Code"] = code
+
+    try:
+        response = requests.post(
+            url,
+            data=payload,
+            auth=(account_sid, auth_token),
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        app.logger.warning(
+            "Twilio Verify request failed (%s).", type(error).__name__
+        )
+        raise RuntimeError("SMS verification is temporarily unavailable.") from error
+
+    if action == "check" and response.status_code == 404:
+        return False
+    try:
+        response.raise_for_status()
+        result = response.json()
+    except (requests.RequestException, ValueError) as error:
+        app.logger.warning(
+            "Twilio Verify returned an unusable response (%s).",
+            type(error).__name__,
+        )
+        raise RuntimeError("SMS verification is temporarily unavailable.") from error
+    return action == "send" or result.get("status") == "approved"
+
+
+def create_auth_challenge(purpose, phone_number, send_sms=True, **fields):
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    challenge = {
+        "_id": hashlib.sha256(token.encode()).hexdigest(),
+        "purpose": purpose,
+        "phone_number": phone_number,
+        "created_at": now,
+        "last_sent_at": now,
+        "expires_at": now + AUTH_CHALLENGE_TTL,
+        "attempt_count": 0,
+        "resend_count": 0,
+        **fields,
+    }
+    get_database().auth_challenges.insert_one(challenge)
+    if send_sms:
+        try:
+            twilio_verify_request("send", phone_number)
+        except RuntimeError:
+            get_database().auth_challenges.delete_one({"_id": challenge["_id"]})
+            raise
+    session["auth_challenge"] = token
+    return challenge
+
+
+def current_auth_challenge(purpose=None):
+    token = session.get("auth_challenge", "")
+    if not token:
+        return None
+    query = {
+        "_id": hashlib.sha256(token.encode()).hexdigest(),
+        "expires_at": {"$gt": datetime.now(timezone.utc)},
+    }
+    if purpose:
+        query["purpose"] = purpose
+    return get_database().auth_challenges.find_one(query)
+
+
+def masked_phone_number(phone_number):
+    return f"{phone_number[:3]}{'•' * max(0, len(phone_number) - 7)}{phone_number[-4:]}"
 
 
 def send_whatsapp(recipient, name, message):
@@ -383,7 +496,10 @@ def protect_forms():
 
 @app.context_processor
 def inject_user():
-    return {"current_user": g.get("user")}
+    return {
+        "current_user": g.get("user"),
+        "sms_authentication_enabled": app.config["SMS_AUTHENTICATION_ENABLED"],
+    }
 
 
 @app.before_request
@@ -460,7 +576,9 @@ def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         if not g.user:
-            return redirect(url_for("login"))
+            return redirect(
+                url_for("login", next=request.full_path.rstrip("?"))
+            )
         return view(*args, **kwargs)
 
     return wrapped
@@ -578,6 +696,255 @@ app.jinja_env.globals["order_documents"] = order_documents
 app.jinja_env.globals["order_items"] = order_items
 
 
+def invoice_fields_for_order(database, order, generated_at=None):
+    generated_at = generated_at or datetime.now(timezone.utc)
+    year = generated_at.year
+    counter = database.bill_counters.find_one_and_update(
+        {"_id": f"bill:{year}"},
+        {"$inc": {"sequence": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    bill_number = (
+        f"{app.config['BILLING_INVOICE_PREFIX']}/{year}/{counter['sequence']:06d}"
+    )
+
+    customer = order.get("billing_customer")
+    if not customer:
+        account = database.users.find_one({"_id": order["user_id"]}) or {}
+        customer = {
+            "name": order.get("customer_name") or account.get("name", "Customer"),
+            "phone": account.get("whatsapp_number", ""),
+            "address": order.get("delivery_address") or account.get("address", ""),
+        }
+    else:
+        customer = {
+            "name": customer.get("name") or order.get("customer_name", "Customer"),
+            "phone": customer.get("phone", ""),
+            "address": customer.get("address", ""),
+        }
+
+    additional_charges_paise = order.get("additional_charges_paise", 0)
+    delivery_charges_paise = order.get(
+        "quoted_delivery_charges_paise", order.get("delivery_fee_paise", 0)
+    )
+    total_paise = order.get("quote_paise", 0)
+    items = order_items(order)
+    invoice_items = []
+    item_total_paise = 0
+    for item in items:
+        product_category = item.get("product_category", "cad")
+        if product_category == "digital_printing":
+            amount_paise = item.get("estimate_paise")
+        else:
+            amount_paise = item.get("quote_paise")
+        if amount_paise is None:
+            amount_paise = 0
+        item_total_paise += amount_paise
+        detail_parts = [
+            "CAD drawing" if product_category == "cad" else "Digital printing",
+            item.get("paper_size", ""),
+        ]
+        if product_category == "cad" and item.get("paper_type"):
+            detail_parts.append(item["paper_type"])
+        if product_category == "digital_printing":
+            detail_parts.extend(
+                [
+                    "Colour" if item.get("print_type") == "color" else "Black & white",
+                    "Front and back" if item.get("print_sides") == "front_back" else "Front only",
+                ]
+            )
+        invoice_items.append({
+            "description": " · ".join(part for part in detail_parts if part),
+            "quantity": (
+                f"{item.get('file_count', len(item.get('documents', [])))} file(s) "
+                f"× {item.get('copies', 1)} cop(y)"
+            ),
+            "amount_paise": amount_paise,
+        })
+
+    # Legacy one-item records may only have an order-level total and estimates.
+    if not order.get("items") and invoice_items:
+        legacy_item = invoice_items[0]
+        legacy_estimate = order.get("digital_estimate_paise")
+        if legacy_estimate is not None:
+            legacy_item["amount_paise"] = legacy_estimate
+            item_total_paise = legacy_estimate
+        else:
+            legacy_item["amount_paise"] = max(
+                total_paise - additional_charges_paise - delivery_charges_paise,
+                0,
+            )
+            item_total_paise = legacy_item["amount_paise"]
+
+    calculated_total = (
+        item_total_paise + additional_charges_paise + delivery_charges_paise
+    )
+    adjustment_paise = total_paise - calculated_total
+    if adjustment_paise:
+        invoice_items.append({
+            "description": "Order total adjustment",
+            "quantity": "",
+            "amount_paise": adjustment_paise,
+        })
+
+    snapshot = {
+        "bill_number": bill_number,
+        "generated_at": generated_at,
+        "seller": {
+            "name": app.config["BILLING_BUSINESS_NAME"],
+            "gstin": app.config["BILLING_GSTIN"],
+            "phone": app.config["BILLING_PHONE"],
+            "email": app.config["BILLING_EMAIL"],
+            "address": app.config["BILLING_ADDRESS"],
+            "state": app.config["BILLING_STATE"],
+        },
+        "customer": customer,
+        "order_number": order.get("tracking_id", str(order["_id"])),
+        "items": invoice_items,
+        "additional_charges_paise": additional_charges_paise,
+        "delivery_charges_paise": delivery_charges_paise,
+        "total_paise": total_paise,
+    }
+    return {
+        "invoice_number": bill_number,
+        "invoice_generated_at": generated_at,
+        "invoice_snapshot": snapshot,
+    }
+
+
+def invoice_pdf(snapshot):
+    pdf_buffer = io.BytesIO()
+    pdf = SimpleDocTemplate(
+        pdf_buffer,
+        pagesize=letter,
+        rightMargin=18 * mm,
+        leftMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+        title=f"Bill {snapshot['bill_number']}",
+        author=snapshot["seller"]["name"],
+    )
+    styles = getSampleStyleSheet()
+    styles["Title"].fontName = "Helvetica-Bold"
+    styles["Title"].fontSize = 19
+    styles["Title"].textColor = colors.HexColor("#18263b")
+    styles["BodyText"].fontSize = 9
+    styles["BodyText"].leading = 13
+    styles["Heading2"].fontSize = 11
+    right_style = styles["BodyText"].clone("InvoiceRight")
+    right_style.alignment = TA_RIGHT
+    seller = snapshot["seller"]
+    customer = snapshot["customer"]
+    story = [
+        Paragraph(escape(seller["name"] or "Business"), styles["Title"]),
+    ]
+    seller_lines = [
+        seller.get("address", ""),
+        f"GSTIN: {seller['gstin']}" if seller.get("gstin") else "",
+        f"Phone: {seller['phone']}" if seller.get("phone") else "",
+        f"Email: {seller['email']}" if seller.get("email") else "",
+        f"State: {seller['state']}" if seller.get("state") else "",
+    ]
+    seller_text = "<br/>".join(escape(line) for line in seller_lines if line)
+    header = Table(
+        [[
+            Paragraph(seller_text or " ", styles["BodyText"]),
+            Paragraph(
+                f"<b>BILL</b><br/>No: {escape(snapshot['bill_number'])}<br/>"
+                f"Date: {snapshot['generated_at'].strftime('%d %b %Y')}<br/>"
+                f"Order: {escape(snapshot['order_number'])}",
+                right_style,
+            ),
+        ]],
+        colWidths=[105 * mm, 65 * mm],
+    )
+    header.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    story.extend([header, Spacer(1, 7 * mm), Paragraph("Billed to", styles["Heading2"])])
+    customer_lines = [
+        customer.get("name", ""),
+        customer.get("address", ""),
+        f"Phone: {customer['phone']}" if customer.get("phone") else "",
+    ]
+    story.extend([
+        Paragraph("<br/>".join(escape(line) for line in customer_lines if line) or "Customer", styles["BodyText"]),
+        Spacer(1, 8 * mm),
+    ])
+
+    table_data = [[
+        Paragraph("<b>#</b>", styles["BodyText"]),
+        Paragraph("<b>Item / description</b>", styles["BodyText"]),
+        Paragraph("<b>Quantity</b>", styles["BodyText"]),
+        Paragraph("<b>Amount (INR)</b>", right_style),
+    ]]
+    for index, item in enumerate(snapshot["items"], 1):
+        description = Paragraph(escape(item["description"]), styles["BodyText"])
+        table_data.append([
+            str(index),
+            description,
+            Paragraph(escape(item.get("quantity", "")), styles["BodyText"]),
+            Paragraph(f"{item['amount_paise'] / 100:,.2f}", right_style),
+        ])
+    item_table = Table(
+        table_data,
+        colWidths=[10 * mm, 83 * mm, 34 * mm, 43 * mm],
+        repeatRows=1,
+    )
+    item_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef1f7")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#18263b")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d8d8d1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.extend([item_table, Spacer(1, 5 * mm)])
+    total_rows = [
+        ["Items total", f"INR {sum(item['amount_paise'] for item in snapshot['items']) / 100:,.2f}"],
+        ["Additional charges", f"INR {snapshot['additional_charges_paise'] / 100:,.2f}"],
+        ["Delivery charges", f"INR {snapshot['delivery_charges_paise'] / 100:,.2f}"],
+        ["Bill total", f"INR {snapshot['total_paise'] / 100:,.2f}"],
+    ]
+    totals = Table(total_rows, colWidths=[127 * mm, 43 * mm], hAlign="RIGHT")
+    totals.setStyle(TableStyle([
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("LINEABOVE", (0, -1), (-1, -1), 0.8, colors.HexColor("#18263b")),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.extend([
+        totals,
+        Spacer(1, 12 * mm),
+        Paragraph("This is a computer-generated bill.", styles["BodyText"]),
+    ])
+    pdf.build(story)
+    pdf_buffer.seek(0)
+    return pdf_buffer.read()
+
+
+def invoice_month_range(month_value):
+    if not re.fullmatch(r"\d{4}-\d{2}", month_value):
+        raise ValueError("Month must use YYYY-MM format.")
+    month = datetime.strptime(month_value, "%Y-%m").replace(
+        day=1, tzinfo=timezone.utc
+    )
+    next_month = (
+        month.replace(year=month.year + 1, month=1)
+        if month.month == 12
+        else month.replace(month=month.month + 1)
+    )
+    return month, next_month
+
+
 def mongo_unavailable():
     return render_template("unavailable.html"), 503
 
@@ -610,10 +977,21 @@ def login():
         user = get_database().users.find_one({"username": username})
         if user and check_password_hash(user["password_hash"], password):
             start_login_session(user["_id"])
+            destination = request.form.get("next", "").strip()
+            parsed_destination = urlsplit(destination)
+            if (
+                user.get("role") == "admin"
+                and destination.startswith("/")
+                and not destination.startswith("//")
+                and not parsed_destination.netloc
+                and parsed_destination.path == url_for("admin_bills")
+            ):
+                return redirect(destination)
             return redirect(url_for(landing_endpoint(user)))
         flash("That username and password do not match.", "error")
     return render_template(
         "login.html",
+        next=request.form.get("next", request.args.get("next", "")),
         demo_mode=app.config["RAJU_DEMO_MODE"],
         demo_admin_username=app.config["DEMO_ADMIN_USERNAME"],
         demo_admin_password=app.config["DEMO_ADMIN_PASSWORD"],
@@ -639,7 +1017,14 @@ def signup():
         name = request.form.get("name", "").strip()
         username = request.form.get("username", "").strip().lower()
         address = request.form.get("address", "").strip()
-        whatsapp_number = request.form.get("whatsapp_number", "").strip()
+        mobile_number = re.sub(
+            r"\D", "", request.form.get("whatsapp_number", "")
+        )
+        whatsapp_number = (
+            f"+91{mobile_number}"
+            if re.fullmatch(r"[6-9]\d{9}", mobile_number)
+            else ""
+        )
         whatsapp_opt_in = request.form.get("whatsapp_opt_in") == "yes"
         password = request.form.get("password", "")
         password_confirm = request.form.get("password_confirm", "")
@@ -647,7 +1032,7 @@ def signup():
             name=name,
             username=username,
             address=address,
-            whatsapp_number=whatsapp_number,
+            whatsapp_number=mobile_number,
             whatsapp_opt_in=whatsapp_opt_in,
         )
 
@@ -657,8 +1042,8 @@ def signup():
             form_error = "Enter your delivery address (up to 500 characters)."
         elif not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,59}", username):
             form_error = "Username must be 3–60 characters and use letters, numbers, dots, dashes, or underscores."
-        elif not normalize_whatsapp_number(whatsapp_number):
-            form_error = "Enter a WhatsApp number with country code, such as +919876543210."
+        elif not whatsapp_number:
+            form_error = "Enter a valid 10-digit Indian mobile number."
         elif not whatsapp_opt_in:
             form_error = "Please agree to receive order updates on WhatsApp."
         elif len(password) < 8:
@@ -671,32 +1056,339 @@ def signup():
             if database.users.find_one({"username": username}):
                 form_error = "That username is already in use. Try signing in instead."
                 response_status = 409
+            elif app.config["SMS_AUTHENTICATION_ENABLED"] and database.auth_challenges.find_one(
+                {
+                    "phone_number": whatsapp_number,
+                    "created_at": {
+                        "$gt": datetime.now(timezone.utc) - timedelta(minutes=1)
+                    },
+                }
+            ):
+                form_error = "Please wait one minute before requesting another verification text."
+                response_status = 429
             else:
-                try:
-                    result = database.users.insert_one(
-                        {
-                            "name": name,
-                            "address": address,
-                            "addresses": [address],
-                            "username": username,
-                            "password_hash": generate_password_hash(password),
-                            "role": "customer",
-                            "whatsapp_number": normalize_whatsapp_number(whatsapp_number),
-                            "whatsapp_opt_in": True,
-                            "whatsapp_opted_in_at": datetime.now(timezone.utc),
-                            "created_at": datetime.now(timezone.utc),
-                        }
-                    )
-                except PyMongoError as error:
-                    if getattr(error, "code", None) == 11000:
+                user = {
+                    "name": name,
+                    "address": address,
+                    "addresses": [address],
+                    "username": username,
+                    "password_hash": generate_password_hash(password),
+                    "role": "customer",
+                    "whatsapp_number": whatsapp_number,
+                    "whatsapp_opt_in": True,
+                    "whatsapp_opted_in_at": datetime.now(timezone.utc),
+                    "created_at": datetime.now(timezone.utc),
+                }
+                if app.config["SMS_AUTHENTICATION_ENABLED"]:
+                    try:
+                        create_auth_challenge(
+                            "signup",
+                            whatsapp_number,
+                            name=name,
+                            address=address,
+                            username=username,
+                            password_hash=user["password_hash"],
+                            whatsapp_opted_in_at=user["whatsapp_opted_in_at"],
+                        )
+                    except RuntimeError:
+                        form_error = (
+                            "We couldn’t send a verification text. Please try again "
+                            "later or contact the shop."
+                        )
+                        response_status = 503
+                    else:
+                        return redirect(url_for("verify_signup"))
+                else:
+                    try:
+                        result = database.users.insert_one(user)
+                    except PyMongoError as error:
+                        if getattr(error, "code", None) != 11000:
+                            raise
                         form_error = "That username is already in use. Try signing in instead."
                         response_status = 409
                     else:
-                        raise
+                        start_login_session(result.inserted_id)
+                        return redirect(url_for("new_order"))
+    return render_template("signup.html", form_data=form_data, form_error=form_error), response_status
+
+
+@app.route("/signup/verify", methods=["GET", "POST"])
+def verify_signup():
+    if not app.config["SMS_AUTHENTICATION_ENABLED"]:
+        return redirect(url_for("signup"))
+    if g.user:
+        return redirect(url_for(landing_endpoint(g.user)))
+    challenge = current_auth_challenge("signup")
+    if not challenge:
+        session.pop("auth_challenge", None)
+        flash("Your verification session expired. Please create your account again.", "error")
+        return redirect(url_for("signup"))
+
+    form_error = None
+    response_status = 200
+    if request.method == "POST":
+        code = request.form.get("code", "").strip()
+        if not AUTH_CODE_PATTERN.fullmatch(code):
+            form_error = "Enter the verification code from the SMS."
+            response_status = 400
+        elif challenge.get("attempt_count", 0) >= 5:
+            form_error = "Too many attempts. Restart account creation to try again."
+            response_status = 429
+        else:
+            try:
+                is_approved = twilio_verify_request(
+                    "check", challenge["phone_number"], code
+                )
+            except RuntimeError:
+                form_error = "SMS verification is temporarily unavailable. Please try again."
+                response_status = 503
+            else:
+                get_database().auth_challenges.update_one(
+                    {"_id": challenge["_id"]}, {"$inc": {"attempt_count": 1}}
+                )
+                if not is_approved:
+                    form_error = "That code is invalid or expired. Check the SMS and try again."
+                    response_status = 400
                 else:
+                    user = {
+                        "name": challenge["name"],
+                        "address": challenge["address"],
+                        "addresses": [challenge["address"]],
+                        "username": challenge["username"],
+                        "password_hash": challenge["password_hash"],
+                        "role": "customer",
+                        "whatsapp_number": challenge["phone_number"],
+                        "phone_verified": True,
+                        "phone_verified_at": datetime.now(timezone.utc),
+                        "whatsapp_opt_in": True,
+                        "whatsapp_opted_in_at": challenge["whatsapp_opted_in_at"],
+                        "created_at": datetime.now(timezone.utc),
+                    }
+                    try:
+                        result = get_database().users.insert_one(user)
+                    except PyMongoError as error:
+                        if getattr(error, "code", None) != 11000:
+                            raise
+                        get_database().auth_challenges.delete_one(
+                            {"_id": challenge["_id"]}
+                        )
+                        session.pop("auth_challenge", None)
+                        flash(
+                            "That username was just registered. Sign in or choose another username.",
+                            "error",
+                        )
+                        return redirect(url_for("signup"))
+                    get_database().auth_challenges.delete_one(
+                        {"_id": challenge["_id"]}
+                    )
                     start_login_session(result.inserted_id)
                     return redirect(url_for("new_order"))
-    return render_template("signup.html", form_data=form_data, form_error=form_error), response_status
+
+    return render_template(
+        "verify_phone.html",
+        purpose="signup",
+        masked_phone=masked_phone_number(challenge["phone_number"]),
+        form_error=form_error,
+    ), response_status
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if not app.config["SMS_AUTHENTICATION_ENABLED"]:
+        return redirect(url_for("login"))
+    if g.user:
+        return redirect(url_for(landing_endpoint(g.user)))
+    form_error = None
+    response_status = 200
+    if request.method == "POST":
+        username = request.form.get("username", "").strip().lower()
+        phone_number = normalize_whatsapp_number(
+            request.form.get("whatsapp_number", "")
+        )
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,59}", username) or not phone_number:
+            form_error = "Enter your username and mobile number with country code."
+            response_status = 400
+        else:
+            user = get_database().users.find_one(
+                {
+                    "username": username,
+                    "role": "customer",
+                    "whatsapp_number": phone_number,
+                },
+                {"_id": 1},
+            )
+            recent_challenge = get_database().auth_challenges.find_one(
+                {
+                    "phone_number": phone_number,
+                    "created_at": {
+                        "$gt": datetime.now(timezone.utc) - timedelta(minutes=1)
+                    },
+                }
+            )
+            try:
+                create_auth_challenge(
+                    "reset",
+                    phone_number,
+                    send_sms=user is not None and recent_challenge is None,
+                    user_id=user["_id"] if user else None,
+                    account_matches=user is not None,
+                )
+            except RuntimeError:
+                form_error = (
+                    "We couldn’t send a verification text. Please try again later."
+                )
+                response_status = 503
+            else:
+                return redirect(url_for("verify_password_reset"))
+    return render_template(
+        "forgot_password.html", form_error=form_error
+    ), response_status
+
+
+@app.route("/forgot-password/verify", methods=["GET", "POST"])
+def verify_password_reset():
+    if not app.config["SMS_AUTHENTICATION_ENABLED"]:
+        return redirect(url_for("login"))
+    if g.user:
+        return redirect(url_for(landing_endpoint(g.user)))
+    challenge = current_auth_challenge("reset")
+    if not challenge:
+        session.pop("auth_challenge", None)
+        flash("Your recovery session expired. Please start again.", "error")
+        return redirect(url_for("forgot_password"))
+    if challenge.get("verified_at"):
+        return redirect(url_for("reset_password"))
+
+    form_error = None
+    response_status = 200
+    if request.method == "POST":
+        code = request.form.get("code", "").strip()
+        if not AUTH_CODE_PATTERN.fullmatch(code):
+            form_error = "Enter the verification code from the SMS."
+            response_status = 400
+        elif challenge.get("attempt_count", 0) >= 5:
+            form_error = "Too many attempts. Restart password recovery to try again."
+            response_status = 429
+        else:
+            try:
+                is_approved = (
+                    challenge.get("account_matches")
+                    and twilio_verify_request(
+                        "check", challenge["phone_number"], code
+                    )
+                )
+            except RuntimeError:
+                form_error = "SMS verification is temporarily unavailable. Please try again."
+                response_status = 503
+            else:
+                get_database().auth_challenges.update_one(
+                    {"_id": challenge["_id"]}, {"$inc": {"attempt_count": 1}}
+                )
+                if not is_approved:
+                    form_error = "That code is invalid or expired. Check the SMS and try again."
+                    response_status = 400
+                else:
+                    get_database().auth_challenges.update_one(
+                        {"_id": challenge["_id"]},
+                        {"$set": {"verified_at": datetime.now(timezone.utc)}},
+                    )
+                    return redirect(url_for("reset_password"))
+    return render_template(
+        "verify_phone.html",
+        purpose="reset",
+        masked_phone=masked_phone_number(challenge["phone_number"]),
+        form_error=form_error,
+    ), response_status
+
+
+@app.route("/forgot-password/reset", methods=["GET", "POST"])
+def reset_password():
+    if not app.config["SMS_AUTHENTICATION_ENABLED"]:
+        return redirect(url_for("login"))
+    if g.user:
+        return redirect(url_for(landing_endpoint(g.user)))
+    challenge = current_auth_challenge("reset")
+    if not challenge or not challenge.get("verified_at"):
+        session.pop("auth_challenge", None)
+        flash("Verify your mobile number before resetting your password.", "error")
+        return redirect(url_for("forgot_password"))
+    form_error = None
+    response_status = 200
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        password_confirm = request.form.get("password_confirm", "")
+        if len(password) < 8:
+            form_error = "Choose a password with at least 8 characters."
+            response_status = 400
+        elif password != password_confirm:
+            form_error = "Those passwords do not match."
+            response_status = 400
+        elif not challenge.get("account_matches") or not challenge.get("user_id"):
+            form_error = "We couldn’t verify those account details. Please start again."
+            response_status = 400
+        else:
+            database = get_database()
+            result = database.users.update_one(
+                {
+                    "_id": challenge["user_id"],
+                    "role": "customer",
+                    "whatsapp_number": challenge["phone_number"],
+                },
+                {"$set": {"password_hash": generate_password_hash(password)}},
+            )
+            if not result.matched_count:
+                form_error = "We couldn’t find that account. Please start again."
+                response_status = 404
+            else:
+                database.login_sessions.update_many(
+                    {"user_id": challenge["user_id"], "revoked_at": None},
+                    {"$set": {"revoked_at": datetime.now(timezone.utc)}},
+                )
+                database.auth_challenges.delete_one({"_id": challenge["_id"]})
+                session.pop("auth_challenge", None)
+                flash("Your password has been reset. You can now sign in.", "success")
+                return redirect(url_for("login"))
+    return render_template(
+        "reset_password.html", form_error=form_error
+    ), response_status
+
+
+@app.post("/auth/resend-code")
+def resend_auth_code():
+    if not app.config["SMS_AUTHENTICATION_ENABLED"]:
+        return redirect(url_for("login"))
+    challenge = current_auth_challenge()
+    if not challenge:
+        session.pop("auth_challenge", None)
+        flash("Your verification session expired. Please start again.", "error")
+        return redirect(url_for("signup"))
+    now = datetime.now(timezone.utc)
+    if challenge.get("resend_count", 0) >= 3:
+        flash("You’ve reached the SMS resend limit. Please start again later.", "error")
+    elif (now - challenge["last_sent_at"]).total_seconds() < 60:
+        flash("Please wait a minute before requesting another code.", "error")
+    elif challenge.get("purpose") == "reset" and not challenge.get("account_matches"):
+        flash("If the account details match, a new code will be sent.", "success")
+    else:
+        try:
+            twilio_verify_request("send", challenge["phone_number"])
+        except RuntimeError:
+            flash("SMS verification is temporarily unavailable. Please try again.", "error")
+        else:
+            get_database().auth_challenges.update_one(
+                {"_id": challenge["_id"]},
+                {
+                    "$set": {"last_sent_at": now},
+                    "$inc": {"resend_count": 1},
+                },
+            )
+            flash("A new verification code has been sent.", "success")
+    endpoint = (
+        "verify_password_reset"
+        if challenge.get("purpose") == "reset"
+        else "verify_signup"
+    )
+    return redirect(url_for(endpoint))
 
 
 @app.post("/logout")
@@ -885,6 +1577,100 @@ def completed_orders():
         selected_customer=customer_id,
         start_date=start_date,
         end_date=end_date,
+    )
+
+
+@app.get("/admin/bills")
+@admin_required
+def admin_bills():
+    month_value = request.args.get("month", datetime.now(timezone.utc).strftime("%Y-%m"))
+    try:
+        start, end = invoice_month_range(month_value)
+    except ValueError:
+        abort(400, description="Choose a valid billing month.")
+    orders = list(
+        get_database()
+        .orders.find({
+            "invoice_generated_at": {"$gte": start, "$lt": end},
+            "invoice_snapshot": {"$exists": True},
+        })
+        .sort("invoice_generated_at", DESCENDING)
+        .limit(1000)
+    )
+    return render_template(
+        "admin_bills.html",
+        orders=orders,
+        selected_month=month_value,
+        total_paise=sum(
+            order["invoice_snapshot"].get("total_paise", 0) for order in orders
+        ),
+    )
+
+
+@app.get("/admin/bills/download")
+@admin_required
+def download_monthly_bills():
+    month_value = request.args.get("month", datetime.now(timezone.utc).strftime("%Y-%m"))
+    try:
+        start, end = invoice_month_range(month_value)
+    except ValueError:
+        abort(400, description="Choose a valid billing month.")
+    orders = list(
+        get_database()
+        .orders.find({
+            "invoice_generated_at": {"$gte": start, "$lt": end},
+            "invoice_snapshot": {"$exists": True},
+        })
+        .sort("invoice_generated_at", DESCENDING)
+    )
+    if not orders:
+        flash("There are no generated bills for that month.", "error")
+        return redirect(url_for("admin_bills", month=month_value))
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+        for order in orders:
+            snapshot = order.get("invoice_snapshot")
+            if not snapshot:
+                app.logger.error(
+                    "Invoice archive encountered a bill without its snapshot: %s",
+                    order.get("invoice_number", order["_id"]),
+                )
+                abort(500, description="A generated bill is missing its saved invoice details.")
+            bill_name = secure_filename(snapshot.get("bill_number", "bill")) or "bill"
+            zip_file.writestr(
+                f"{bill_name}.pdf",
+                invoice_pdf(snapshot),
+            )
+    archive.seek(0)
+    return send_file(
+        archive,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"bills_{month_value}.zip",
+    )
+
+
+@app.get("/orders/<order_id>/bill")
+@login_required
+def download_order_bill(order_id):
+    try:
+        order_object_id = ObjectId(order_id)
+    except (InvalidId, TypeError):
+        abort(404)
+    order = get_database().orders.find_one({"_id": order_object_id})
+    if not order:
+        abort(404)
+    if g.user["role"] != "admin" and order.get("user_id") != g.user["_id"]:
+        abort(403)
+    snapshot = order.get("invoice_snapshot")
+    if not snapshot or not order.get("invoice_number"):
+        abort(404, description="A bill is not available until payment is confirmed.")
+    bill_name = secure_filename(snapshot["bill_number"]) or "bill"
+    return send_file(
+        io.BytesIO(invoice_pdf(snapshot)),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"{bill_name}.pdf",
     )
 
 
@@ -1301,6 +2087,15 @@ def create_order():
         "tracking_id": order_tracking_id,
         "user_id": g.user["_id"],
         "customer_name": g.user["name"],
+        "billing_customer": {
+            "name": g.user["name"],
+            "phone": g.user.get("whatsapp_number", ""),
+            "address": (
+                delivery_address
+                if delivery_type == "delivery"
+                else g.user.get("address", "")
+            ),
+        },
         "items": items,
         "documents": documents,
         "file_count": file_count,
@@ -1668,8 +2463,17 @@ def add_order_update(order_id):
         FULFILLMENT_RANK[current_status] < FULFILLMENT_RANK["paid"]
         and FULFILLMENT_RANK[next_status] >= FULFILLMENT_RANK["paid"]
     ):
-        update_fields["paid_at"] = datetime.now(timezone.utc)
+        confirmed_at = datetime.now(timezone.utc)
+        update_fields["paid_at"] = confirmed_at
         update_fields["payment_confirmed_by"] = g.user["_id"]
+        if not order.get("invoice_number"):
+            update_fields.update(
+                invoice_fields_for_order(database, order, confirmed_at)
+            )
+    elif next_status == "confirmed" and not order.get("invoice_number"):
+        update_fields.update(
+            invoice_fields_for_order(database, order, datetime.now(timezone.utc))
+        )
     if next_status == "delivered" and current_status != "delivered":
         update_fields["delivered_at"] = datetime.now(timezone.utc)
     if expected_date_changed:
@@ -1906,14 +2710,18 @@ def confirm_upi_payment(order_id):
     order = database.orders.find_one({"_id": ObjectId(order_id), "status": "payment_submitted"})
     if not order:
         abort(404)
+    confirmed_at = datetime.now(timezone.utc)
+    paid_fields = {
+        "status": "paid",
+        "paid_at": confirmed_at,
+        "payment_confirmed_by": g.user["_id"],
+    }
+    if not order.get("invoice_number"):
+        paid_fields.update(invoice_fields_for_order(database, order, confirmed_at))
     result = database.orders.update_one(
         {"_id": order["_id"], "status": "payment_submitted"},
         {
-            "$set": {
-                "status": "paid",
-                "paid_at": datetime.now(timezone.utc),
-                "payment_confirmed_by": g.user["_id"],
-            },
+            "$set": paid_fields,
             "$push": {"updates": order_update("paid", "UPI payment received and confirmed by CAD Master.")},
         },
     )

@@ -24,7 +24,7 @@
           <div class="admin-order-spec">{% for item in order_items(order) %}<div><strong>{{ 'CAD drawing' if item.product_category == 'cad' else 'Digital printing' }} · {{ item.paper_size }}</strong><span>{{ item.documents|length }} file{{ '' if item.documents|length == 1 else 's' }} · {{ item.copies }} print{{ '' if item.copies == 1 else 's' }} per file{% if item.product_category == 'digital_printing' %} · {{ 'Colour' if item.print_type == 'color' else 'B&W' }}{% if item.print_sides == 'front_back' %} · Front and back{% endif %}{% elif item.paper_type %} · {{ item.paper_type }}{% endif %}</span></div>{% endfor %}<span>{{ order.get('delivery_type', 'pickup')|title }}{% if order.delivery_address %} · {{ order.delivery_address }}{% endif %}</span></div>
           <span class="status status-{{ order.status }}"><i></i>{{ order.status|status_label }}</span>
         </div>
-        <div class="archive-details"><strong>{{ order.get('tracking_id', 'RP-' ~ order._id) }}</strong>{% if order.quote_paise %}<span>Quote ₹{{ order.quote_paise|money }}</span>{% endif %}{% if order.cancelled_at %}<span>Cancelled {{ order.cancelled_at.strftime('%d %b %Y') }}</span>{% endif %}</div>
+        <div class="archive-details"><strong>{{ order.get('tracking_id', 'RP-' ~ order._id) }}</strong>{% if order.quote_paise %}<span>Quote ₹{{ order.quote_paise|money }}</span>{% endif %}{% if order.invoice_number %}<a class="button button-quiet" href="{{ url_for('download_order_bill', order_id=order._id) }}">Download bill</a>{% endif %}{% if order.cancelled_at %}<span>Cancelled {{ order.cancelled_at.strftime('%d %b %Y') }}</span>{% endif %}</div>
       </article>
       {% endfor %}
     </div>

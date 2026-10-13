@@ -475,6 +475,9 @@ body.file-preview-open { overflow: hidden; }
 .signup-form .field small { color: var(--muted); font-size: 9px; }
 .signup-password-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .signup-form .button { margin-top: 4px; }
+.auth-form-error { margin: 14px 0; border-left: 3px solid var(--orange); padding: 11px 13px; background: #fff4ef; color: #7b382a; font-size: 12px; line-height: 1.5; }
+.auth-resend-form { margin-top: 12px; text-align: center; }
+.auth-resend-form .button { margin-top: 0; }
 .signup-login-note { margin-top: 19px; color: var(--muted); font-size: 11px; }
 .signup-login-note a, .login-foot a { color: var(--blue); font-weight: 700; text-decoration: none; }
 .signup-login-note a:hover, .login-foot a:hover { text-decoration: underline; }
