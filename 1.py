@@ -128,6 +128,7 @@ ORDER_STATUS_LABELS = {
     "out_for_delivery": "Dispatched",
     "delivered": "Delivered",
     "cancelled": "Cancelled",
+    "rejected": "Rejected by admin",
 }
 FULFILLMENT_RANK = {
     "awaiting_payment": -2,
@@ -674,6 +675,63 @@ def order_document_entries(order):
         }, ""
 
 
+def delete_rejected_order_files(database, order):
+    upload_root = UPLOAD_FOLDER.resolve()
+    for document, document_path in order_document_entries(order):
+        stored_name = document.get("stored_name")
+        if not stored_name:
+            app.logger.warning(
+                "Rejected-order cleanup skipped a document without a stored file for order %s.",
+                order["_id"],
+            )
+            continue
+
+        stored_path = (upload_root / stored_name).resolve()
+        if stored_path.parent != upload_root:
+            app.logger.error(
+                "Rejected-order cleanup found an unsafe stored-file path for order %s.",
+                order["_id"],
+            )
+            abort(
+                409,
+                description="A rejected order contains an unsafe stored-file path; cleanup was stopped.",
+            )
+
+        deleted_field = f"{document_path}.file_deleted" if document_path else "file_deleted"
+        deleted_at_field = (
+            f"{document_path}.file_deleted_at" if document_path else "file_deleted_at"
+        )
+        result = database.orders.update_one(
+            {
+                "_id": order["_id"],
+                "status": "rejected",
+                f"{document_path}.stored_name" if document_path else "stored_name": stored_name,
+                deleted_field: {"$ne": True},
+            },
+            {
+                "$set": {
+                    deleted_field: True,
+                    deleted_at_field: datetime.now(timezone.utc),
+                }
+            },
+        )
+        if not result.modified_count:
+            continue
+
+        try:
+            stored_path.unlink(missing_ok=True)
+        except OSError:
+            database.orders.update_one(
+                {"_id": order["_id"], "status": "rejected"},
+                {"$unset": {deleted_field: "", deleted_at_field: ""}},
+            )
+            app.logger.exception(
+                "Rejected-order cleanup could not delete an uploaded file for order %s.",
+                order["_id"],
+            )
+            raise
+
+
 def order_items(order):
     if order.get("items"):
         return order["items"]
@@ -691,12 +749,48 @@ def order_items(order):
     }]
 
 
+def item_copy_count(item):
+    file_count = item.get("file_count", len(item.get("documents", []))) or 1
+    copies = item.get("copies", 1) or 1
+    return max(int(file_count), 1) * max(int(copies), 1)
+
+
+def item_quote_per_copy_paise(item, order=None):
+    existing_rate = item.get("quote_per_copy_paise")
+    if existing_rate is not None:
+        return existing_rate
+
+    amount_paise = item.get("quote_paise")
+    if item.get("product_category") == "digital_printing":
+        amount_paise = item.get("estimate_paise", amount_paise)
+    if order and not order.get("items") and item.get("estimate_paise") is None:
+        amount_paise = max(
+            order.get("quote_paise", 0)
+            - order.get("additional_charges_paise", 0)
+            - order.get(
+                "quoted_delivery_charges_paise",
+                order.get("delivery_fee_paise", 0),
+            ),
+            0,
+        )
+    if amount_paise is None:
+        return None
+    return int(
+        (Decimal(amount_paise) / item_copy_count(item)).quantize(Decimal("1"))
+    )
+
+
 app.jinja_env.filters["money"] = money
 app.jinja_env.globals["order_documents"] = order_documents
 app.jinja_env.globals["order_items"] = order_items
+app.jinja_env.globals["item_copy_count"] = item_copy_count
+app.jinja_env.globals["item_quote_per_copy_paise"] = item_quote_per_copy_paise
 
 
 def invoice_fields_for_order(database, order, generated_at=None):
+    if order.get("status") == "rejected":
+        raise ValueError("Cannot generate a bill for a rejected order.")
+
     generated_at = generated_at or datetime.now(timezone.utc)
     year = generated_at.year
     counter = database.bill_counters.find_one_and_update(
@@ -735,7 +829,11 @@ def invoice_fields_for_order(database, order, generated_at=None):
     for item in items:
         product_category = item.get("product_category", "cad")
         if product_category == "digital_printing":
-            amount_paise = item.get("estimate_paise")
+            amount_paise = (
+                item.get("quote_paise")
+                if item.get("quote_per_copy_paise") is not None
+                else item.get("estimate_paise")
+            )
         else:
             amount_paise = item.get("quote_paise")
         if amount_paise is None:
@@ -750,12 +848,18 @@ def invoice_fields_for_order(database, order, generated_at=None):
         if product_category == "digital_printing":
             detail_parts.extend(
                 [
-                    "Colour" if item.get("print_type") == "color" else "Black & white",
                     "Front and back" if item.get("print_sides") == "front_back" else "Front only",
                 ]
             )
         invoice_items.append({
             "description": " · ".join(part for part in detail_parts if part),
+            "print_type": (
+                "Color"
+                if item.get("print_type") == "color"
+                else "Black & white"
+                if product_category == "digital_printing"
+                else ""
+            ),
             "quantity": (
                 f"{item.get('file_count', len(item.get('documents', [])))} file(s) "
                 f"× {item.get('copies', 1)} cop(y)"
@@ -879,6 +983,7 @@ def invoice_pdf(snapshot):
     table_data = [[
         Paragraph("<b>#</b>", styles["BodyText"]),
         Paragraph("<b>Item / description</b>", styles["BodyText"]),
+        Paragraph("<b>Print type</b>", styles["BodyText"]),
         Paragraph("<b>Quantity</b>", styles["BodyText"]),
         Paragraph("<b>Amount (INR)</b>", right_style),
     ]]
@@ -887,12 +992,13 @@ def invoice_pdf(snapshot):
         table_data.append([
             str(index),
             description,
+            Paragraph(escape(item.get("print_type") or "-"), styles["BodyText"]),
             Paragraph(escape(item.get("quantity", "")), styles["BodyText"]),
             Paragraph(f"{item['amount_paise'] / 100:,.2f}", right_style),
         ])
     item_table = Table(
         table_data,
-        colWidths=[10 * mm, 83 * mm, 34 * mm, 43 * mm],
+        colWidths=[8 * mm, 67 * mm, 30 * mm, 30 * mm, 35 * mm],
         repeatRows=1,
     )
     item_table.setStyle(TableStyle([
@@ -1469,7 +1575,7 @@ def dashboard():
             "paid_not_production": ("Paid, not in production", ["paid", "confirmed"]),
             "production": ("In production", ["printing", "work_in_progress"]),
             "dispatch": ("Ready for pickup / dispatch", ["ready_for_pickup", "out_for_delivery"]),
-            "cancelled": ("Cancelled", ["cancelled"]),
+            "cancelled": ("Cancelled / rejected", ["cancelled", "rejected"]),
         }
         selected_filter = request.args.get("order_filter", "all")
         if selected_filter not in order_filters:
@@ -1539,7 +1645,7 @@ def order_history():
         .orders.find(
             {
                 "user_id": g.user["_id"],
-                "status": {"$in": ["delivered", "cancelled"]},
+                "status": {"$in": ["delivered", "cancelled", "rejected"]},
             }
         )
         .sort("created_at", DESCENDING)
@@ -1593,6 +1699,7 @@ def admin_bills():
         .orders.find({
             "invoice_generated_at": {"$gte": start, "$lt": end},
             "invoice_snapshot": {"$exists": True},
+            "status": {"$ne": "rejected"},
         })
         .sort("invoice_generated_at", DESCENDING)
         .limit(1000)
@@ -1620,6 +1727,7 @@ def download_monthly_bills():
         .orders.find({
             "invoice_generated_at": {"$gte": start, "$lt": end},
             "invoice_snapshot": {"$exists": True},
+            "status": {"$ne": "rejected"},
         })
         .sort("invoice_generated_at", DESCENDING)
     )
@@ -1663,7 +1771,11 @@ def download_order_bill(order_id):
     if g.user["role"] != "admin" and order.get("user_id") != g.user["_id"]:
         abort(403)
     snapshot = order.get("invoice_snapshot")
-    if not snapshot or not order.get("invoice_number"):
+    if (
+        order.get("status") == "rejected"
+        or not snapshot
+        or not order.get("invoice_number")
+    ):
         abort(404, description="A bill is not available until payment is confirmed.")
     bill_name = secure_filename(snapshot["bill_number"]) or "bill"
     return send_file(
@@ -1714,7 +1826,7 @@ def completed_file_cleanup_filters(source):
 
 
 def completed_file_cleanup_candidates(database, filters):
-    query = {"status": {"$in": ["delivered", "cancelled"]}}
+    query = {"status": {"$in": ["delivered", "cancelled", "rejected"]}}
     if filters["customer_id"]:
         query["user_id"] = ObjectId(filters["customer_id"])
     if filters["start_date"]:
@@ -1834,7 +1946,7 @@ def cleanup_completed_order_files():
         result = database.orders.update_one(
             {
                 "_id": candidate["order"]["_id"],
-                "status": {"$in": ["delivered", "cancelled"]},
+                "status": {"$in": ["delivered", "cancelled", "rejected"]},
                 deleted_field: {"$ne": True},
             },
             {"$set": {deleted_field: True, deleted_at_field: datetime.now(timezone.utc)}},
@@ -2177,17 +2289,18 @@ def update_quote(order_id):
     if not order:
         abort(404)
     items = order_items(order)
-    item_quote_paise = []
+    item_quote_per_copy_values = []
     try:
         for index, item in enumerate(items):
             raw_quote = request.form.get(f"item_quote_{index}", "").strip()
             if not raw_quote and len(items) == 1:
                 raw_quote = request.form.get("amount", "").strip()
-            amount = Decimal(raw_quote).quantize(Decimal("0.01"))
-            amount_paise = int(amount * 100)
-            if not amount.is_finite() or amount_paise <= 0:
+            amount = Decimal(raw_quote)
+            if not amount.is_finite() or amount <= 0:
                 raise InvalidOperation
-            item_quote_paise.append(amount_paise)
+            amount = amount.quantize(Decimal("0.01"))
+            rate_paise = int(amount * 100)
+            item_quote_per_copy_values.append(rate_paise)
     except (InvalidOperation, ValueError):
         flash("Enter a valid quotation greater than zero for every cart item.", "error")
         return redirect(url_for("dashboard"))
@@ -2212,7 +2325,14 @@ def update_quote(order_id):
         flash("Additional and delivery charges must be zero or more.", "error")
         return redirect(url_for("dashboard"))
 
-    for item, amount_paise in zip(items, item_quote_paise):
+    item_quote_paise = [
+        rate_paise * item_copy_count(item)
+        for item, rate_paise in zip(items, item_quote_per_copy_values)
+    ]
+    for item, rate_paise, amount_paise in zip(
+        items, item_quote_per_copy_values, item_quote_paise
+    ):
+        item["quote_per_copy_paise"] = rate_paise
         item["quote_paise"] = amount_paise
     quote_paise = (
         sum(item_quote_paise)
@@ -2516,6 +2636,55 @@ def add_order_update(order_id):
     )
     flash("Order update posted.", "success")
     return redirect(url_for("dashboard"))
+
+
+@app.post("/admin/orders/<order_id>/reject")
+@admin_required
+def reject_order(order_id):
+    try:
+        order_object_id = ObjectId(order_id)
+    except (InvalidId, TypeError):
+        abort(404)
+    database = get_database()
+    order = database.orders.find_one({"_id": order_object_id})
+    if not order:
+        abort(404)
+    if order.get("status") == "rejected":
+        delete_rejected_order_files(database, order)
+        flash("This order was already rejected; its uploaded files have been deleted.", "success")
+        return redirect(url_for("dashboard", order_filter="cancelled"))
+
+    rejected_at = datetime.now(timezone.utc)
+    reason = request.form.get("reason", "").strip()[:500]
+    note = "Order rejected by CAD Master."
+    if reason:
+        note += f" Reason: {reason}"
+    result = database.orders.update_one(
+        {"_id": order_object_id, "status": {"$ne": "rejected"}},
+        {
+            "$set": {
+                "status": "rejected",
+                "rejected_at": rejected_at,
+                "rejected_by": g.user["_id"],
+            },
+            "$unset": {
+                "invoice_number": "",
+                "invoice_generated_at": "",
+                "invoice_snapshot": "",
+            },
+            "$push": {"updates": order_update("rejected", note)},
+        },
+    )
+    if not result.matched_count:
+        abort(409)
+    delete_rejected_order_files(database, order)
+    notify_customer(
+        order["user_id"],
+        f"Your order {order.get('tracking_id', order['_id'])} was rejected by CAD Master."
+        + (f" Reason: {reason}" if reason else ""),
+    )
+    flash("Order rejected. Any issued bill has been voided and removed.", "success")
+    return redirect(url_for("dashboard", order_filter="cancelled"))
 
 
 @app.post("/orders/<order_id>/cancel")

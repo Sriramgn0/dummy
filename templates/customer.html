@@ -12,7 +12,26 @@
   <div class="topbar-right"><span class="user-chip"><span class="avatar">{{ current_user.name[0]|upper }}</span><span>{{ current_user.name }}</span></span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet logout-button" type="submit">Log out</button></form></div>
 </header>
 <main class="workspace">
-  <div class="page-heading history-heading"><div><p class="eyebrow">CUSTOMER DESK <span class="eyebrow-divider">/</span> {{ current_user.username|upper }}</p><h1>Your print orders.</h1><p class="muted">Track each order, review its files, and see what needs to happen next.</p></div><div class="history-heading-actions"><span class="heading-stamp">RP <span>—</span> 01</span><a class="button button-quiet" href="{{ url_for('order_history') }}">Order history</a><a class="button button-quiet" href="{{ url_for('account_addresses') }}">Delivery addresses</a><a class="button button-primary" href="{{ url_for('new_order') }}">New order <span aria-hidden="true">＋</span></a></div></div>
+  {% set order_counts = namespace(payment=0, production=0) %}
+  {% for order in orders %}
+    {% if order.status in ['awaiting_payment', 'payment_submitted'] %}{% set order_counts.payment = order_counts.payment + 1 %}{% endif %}
+    {% if order.status in ['paid', 'confirmed', 'printing', 'work_in_progress', 'ready_for_pickup', 'out_for_delivery'] %}{% set order_counts.production = order_counts.production + 1 %}{% endif %}
+  {% endfor %}
+  <section class="dashboard-welcome">
+    <div class="dashboard-welcome-copy">
+      <p class="eyebrow">CUSTOMER DESK <span class="eyebrow-divider">/</span> {{ current_user.username|upper }}</p>
+      <h1>Good to see you, {{ current_user.name.split()[0] }}.</h1>
+      <p>Everything for your print orders, all in one place. Check a quote, follow progress, or start something new.</p>
+      <a class="button button-primary" href="{{ url_for('new_order') }}">Start a new order <span aria-hidden="true">↗</span></a>
+    </div>
+    <div class="dashboard-welcome-art" aria-hidden="true"><span class="welcome-sheet welcome-sheet-back"></span><span class="welcome-sheet welcome-sheet-front"><i></i><i></i><i></i><b>PRINT<br>READY</b></span><span class="welcome-art-mark">CM</span></div>
+  </section>
+  <section class="dashboard-glance" aria-label="Order overview">
+    <div><span>ACTIVE ORDERS</span><strong>{{ orders|length }}</strong><small>Orders in your queue</small></div>
+    <div><span>PAYMENT ACTION</span><strong>{{ order_counts.payment }}</strong><small>Quotes or payments to review</small></div>
+    <div><span>IN PRODUCTION</span><strong>{{ order_counts.production }}</strong><small>Being prepared by the print desk</small></div>
+    <div class="dashboard-shortcuts"><a href="{{ url_for('order_history') }}">View order history <span aria-hidden="true">↗</span></a><a href="{{ url_for('account_addresses') }}">Manage addresses <span aria-hidden="true">↗</span></a></div>
+  </section>
   <section class="orders-section">
     <div class="section-heading"><div><span class="section-index">01</span><h2>Active orders</h2><span class="count-pill">{{ orders|length }}</span></div><span class="section-note">YOUR MOST RECENT ORDERS</span></div>
     {% if orders %}
@@ -31,7 +50,7 @@
               <div class="customer-order-item-heading"><div><span class="customer-item-number">ITEM {{ loop.index }}</span><h3>{{ 'CAD drawing' if item.product_category == 'cad' else 'Digital printing' }}</h3></div><strong>{{ item.paper_size }}</strong></div>
               <div class="customer-order-item-details"><span>{{ item.documents|length }} file{{ '' if item.documents|length == 1 else 's' }}</span><span>{{ item.copies }} copie{{ '' if item.copies == 1 else 's' }} per file</span>{% if item.product_category == 'digital_printing' %}<span>{{ 'Colour' if item.print_type == 'color' else 'Black and white' }}</span><span>{{ 'Front and back' if item.print_sides == 'front_back' else 'Front only' }}</span>{% elif item.paper_type %}<span>{{ item.paper_type }}</span>{% endif %}</div>
               {% if item.quote_paise is defined and item.quote_paise is not none %}
-              <p class="customer-item-quote">Item quotation: <strong>₹{{ (item.quote_paise - (order.get('delivery_fee_paise', 0) if not order.get('items') and loop.length == 1 else 0))|money }}</strong></p>
+              <p class="customer-item-quote">Item quotation: <strong>{% if item.quote_per_copy_paise is defined and item.quote_per_copy_paise is not none %}₹{{ item.quote_per_copy_paise|money }} per copy × {{ item_copy_count(item) }} = {% endif %}₹{{ (item.quote_paise - (order.get('delivery_fee_paise', 0) if not order.get('items') and loop.length == 1 else 0))|money }}</strong></p>
               {% elif item.estimate_paise is defined and item.estimate_paise is not none %}
               <p class="customer-item-quote">Item estimate: <strong>₹{{ item.estimate_paise|money }}</strong></p>
               {% elif loop.length == 1 and order.quote_paise %}
@@ -51,6 +70,15 @@
             {% endfor %}
           </section>
           <aside class="customer-order-summary">
+            <div class="order-next-step">
+              <span>WHAT HAPPENS NEXT</span>
+              {% if order.status == 'pending_quote' %}<strong>We’re preparing your quote</strong><p>Our print desk will review the files and send your price here.</p>
+              {% elif order.status == 'awaiting_payment' %}<strong>Your quote is ready</strong><p>Review the total and report your UPI payment when complete.</p>
+              {% elif order.status == 'payment_submitted' %}<strong>Payment confirmation pending</strong><p>We’ll start processing after the print desk confirms receipt.</p>
+              {% elif order.status == 'ready_for_pickup' %}<strong>Your order is ready</strong><p>Visit the print desk to collect your completed order.</p>
+              {% elif order.status == 'out_for_delivery' %}<strong>Your order is on its way</strong><p>Check the latest update below for dispatch details.</p>
+              {% else %}<strong>Your order is being prepared</strong><p>We’ll post progress updates here as work continues.</p>{% endif %}
+            </div>
             <div class="customer-summary-row"><span>Order status</span><strong>{{ order.status|status_label }}</strong></div>
             {% if order.quote_paise %}
             <div class="customer-summary-row"><span>Additional charges</span><strong>₹{{ order.get('additional_charges_paise', 0)|money }}</strong></div>
