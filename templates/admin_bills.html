@@ -23,7 +23,7 @@
         <div class="admin-order-number"><span>BILL NO.</span><strong>{{ order.invoice_number }}</strong><a class="button button-quiet admin-download-order" href="{{ url_for('download_order_bill', order_id=order._id) }}">Download bill</a></div>
         <div class="admin-order-main">
           <div class="admin-customer"><span class="avatar avatar-small">{{ bill.customer.name[0]|upper if bill.customer.name else 'C' }}</span><span>{{ bill.customer.name }}<small class="id-small">{{ bill.customer.phone }}</small></span></div>
-          <div class="admin-order-spec"><strong>Order {{ bill.order_number }}</strong><span>Generated {{ order.invoice_generated_at.strftime('%d %b %Y · %I:%M %p') }}</span><span>{{ bill['items']|length }} billed line{{ '' if bill['items']|length == 1 else 's' }}</span></div>
+          <div class="admin-order-spec"><strong>Order {{ bill.order_number }}</strong><span>Generated {{ order.invoice_generated_at.strftime('%d %b %Y · %I:%M %p') }}</span><span>{{ bill['items']|length }} billed line{{ '' if bill['items']|length == 1 else 's' }}</span>{% for item in bill['items'] %}<span>{{ item.description }}{% if item.get('print_type') %} · Print type: {{ item.print_type }}{% endif %}{% if item.quantity %} · {{ item.quantity }}{% endif %}</span>{% endfor %}</div>
           <strong class="customer-order-price">INR {{ bill.total_paise|money }}</strong>
         </div>
       </article>

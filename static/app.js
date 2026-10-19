@@ -21,6 +21,14 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  document.querySelectorAll("[data-reject-order]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (!window.confirm("Reject this order? Any issued bill will be voided and removed from reports.")) {
+        event.preventDefault();
+      }
+    });
+  });
+
   const flashPopup = document.querySelector("[data-flash-popup]");
   if (flashPopup) {
     const closeButtons = flashPopup.querySelectorAll("[data-popup-close]");
@@ -137,16 +145,21 @@ document.addEventListener("DOMContentLoaded", () => {
     const grandTotal = form.querySelector("[data-quote-grand-total]");
     const updateQuoteTotal = () => {
       const amounts = itemQuotes.map((input) => Number(input.value));
+      const quantities = itemQuotes.map((input) => Number(input.dataset.itemCopyCount));
       const charges = chargeInputs.map((input) => input.value.trim() === "" ? 0 : Number(input.value));
       const allValid = amounts.length > 0
         && amounts.every((amount) => Number.isFinite(amount) && amount > 0)
+        && quantities.every((quantity) => Number.isInteger(quantity) && quantity > 0)
         && charges.every((amount) => Number.isFinite(amount) && amount >= 0);
       if (!allValid) {
         itemsTotal.textContent = "Enter item prices";
         grandTotal.textContent = "Enter item prices";
         return;
       }
-      const itemTotal = amounts.reduce((sum, amount) => sum + amount, 0);
+      const itemTotal = amounts.reduce(
+        (sum, amount, index) => sum + amount * quantities[index],
+        0,
+      );
       const additionalCharges = charges[0] || 0;
       const deliveryCharges = charges[1] || 0;
       itemsTotal.textContent = `₹${itemTotal.toFixed(2)}`;

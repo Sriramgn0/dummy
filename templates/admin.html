@@ -6,8 +6,11 @@
   <nav class="admin-nav"><a href="{{ url_for('digital_prices') }}">Prices</a><a href="{{ url_for('completed_orders') }}">Completed</a><a href="{{ url_for('admin_bills') }}">Bills</a><a href="{{ url_for('customers') }}">Customers</a><a href="{{ url_for('new_customer') }}">Add customer</a></nav>
   <div class="topbar-right"><span class="admin-tag"><span class="admin-tag-dot"></span> ADMIN DESK</span><span class="user-chip"><span class="avatar avatar-admin">CM</span><span>{{ current_user.name }}</span></span><form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-quiet logout-button" type="submit">Log out</button></form></div>
 </header>
-<main class="workspace admin-workspace">
-  <div class="page-heading"><div><p class="eyebrow">CAD MASTER <span class="eyebrow-divider">/</span> ACTIVE QUEUE</p><h1>Orders in progress.</h1><p class="muted">Quote orders, verify payments, update work status, and set delivery dates.</p></div><span class="heading-stamp">OPEN <span>—</span> {{ orders|length }}</span></div>
+<main class="workspace admin-workspace admin-dashboard-workspace">
+  <section class="admin-welcome">
+    <div><p class="eyebrow">CAD MASTER <span class="eyebrow-divider">/</span> ORDER DESK</p><h1>Good day, {{ current_user.name.split()[0] }}.</h1><p>Here’s your queue. Take care of quotations, payment checks, and production updates.</p></div>
+    <div class="admin-welcome-actions"><a class="button button-quiet" href="{{ url_for('digital_prices') }}">Manage prices</a><a class="button button-primary" href="{{ url_for('new_customer') }}">＋ Add customer</a></div>
+  </section>
   <section class="stats-row" aria-label="Active order totals"><div class="stat"><span>NEEDS A QUOTE</span><strong>{{ counts.open }}</strong><i class="stat-mark mark-orange"></i></div><div class="stat"><span>PAYMENT ACTION</span><strong>{{ counts.payment }}</strong><i class="stat-mark mark-blue"></i></div><div class="stat"><span>IN PRODUCTION</span><strong>{{ counts.paid }}</strong><i class="stat-mark mark-green"></i></div></section>
   <form class="admin-order-filter" method="get" action="{{ url_for('dashboard') }}">
     <label for="order-filter">Filter orders</label>
@@ -31,6 +34,7 @@
         <div class="admin-order-header-actions">
           <span class="status status-{{ order.status }}"><i></i>{{ order.status|status_label }}</span>
           <a class="button button-quiet admin-download-order" href="{{ url_for('download_order_files', order_id=order._id) }}">Download ZIP</a>
+          {% if order.status != 'rejected' %}<form class="reject-order-form" method="post" action="{{ url_for('reject_order', order_id=order._id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-cancel" type="submit" data-reject-order>Reject order</button></form>{% endif %}
         </div>
       </header>
       <div class="customer-order-body">
@@ -53,7 +57,7 @@
               {% endif %}
             </div>
             {% if item.quote_paise is defined and item.quote_paise is not none %}
-            <p class="admin-item-estimate">Quoted item total: <strong>₹{{ item.quote_paise|money }}</strong></p>
+            <p class="admin-item-estimate">Quoted item total: <strong>₹{{ item.quote_paise|money }}</strong>{% if item.quote_per_copy_paise is defined and item.quote_per_copy_paise is not none %}<span> · ₹{{ item.quote_per_copy_paise|money }} per copy, per file</span>{% endif %}</p>
             {% elif item.product_category == 'digital_printing' and item.estimate_paise is not none %}
             <p class="admin-item-estimate">Estimated item total: <strong>₹{{ item.estimate_paise|money }}</strong>{% if item.price_each_paise %}<span> · ₹{{ item.price_each_paise|money }} per sheet</span>{% endif %}</p>
             {% endif %}
@@ -89,11 +93,11 @@
       <section class="admin-order-tools">
         <form class="quote-form item-quote-form" method="post" action="{{ url_for('update_quote', order_id=order._id) }}" data-item-quote-form>
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <strong class="item-quote-title">Set a price for each cart item</strong>
+          <strong class="item-quote-title">Set a price per copy, per file</strong>
           {% for item in order_items(order) %}
           <label class="item-quote-row" for="item-quote-{{ order._id }}-{{ loop.index0 }}">
-            <span>Item {{ loop.index }} · {{ 'CAD drawing' if item.product_category == 'cad' else 'Digital printing' }} · {{ item.paper_size }}</span>
-            <span class="currency-input"><span>₹</span><input id="item-quote-{{ order._id }}-{{ loop.index0 }}" name="item_quote_{{ loop.index0 }}" type="number" min="0.01" step="0.01" data-item-quote value="{{ '%.2f'|format((item.quote_paise - (order.get('delivery_fee_paise', 0) if not order.get('items') else 0)) / 100) if item.quote_paise is defined and item.quote_paise is not none else ('%.2f'|format(item.estimate_paise / 100) if item.estimate_paise is defined and item.estimate_paise is not none else ('%.2f'|format((order.quote_paise - order.get('delivery_fee_paise', 0)) / 100) if loop.length == 1 and order.quote_paise else '')) }}" placeholder="0.00" required></span>
+            <span>Item {{ loop.index }} · {{ 'CAD drawing' if item.product_category == 'cad' else 'Digital printing' }} · {{ item.paper_size }} · {{ item.documents|length }} files × {{ item.copies }} copies per file</span>
+            <span class="currency-input"><span>₹</span><input id="item-quote-{{ order._id }}-{{ loop.index0 }}" name="item_quote_{{ loop.index0 }}" type="number" min="0.01" step="0.01" data-item-quote data-item-copy-count="{{ item_copy_count(item) }}" value="{{ '%.2f'|format(item_quote_per_copy_paise(item, order) / 100) if item_quote_per_copy_paise(item, order) is not none else '' }}" placeholder="per copy" required></span>
           </label>
           {% endfor %}
           <div class="item-quote-total"><span>Items total</span><strong data-quote-items-total>Enter item prices</strong></div>
